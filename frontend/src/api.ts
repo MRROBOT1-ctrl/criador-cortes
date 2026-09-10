@@ -5,6 +5,8 @@ import type {
   CaptionLinesOut,
   CaptionStyle,
   ClipOut,
+  CutSegment,
+  CutSegmentsOut,
   JobOut,
   JobSummary,
   PanKeyframe,
@@ -210,6 +212,23 @@ export async function setClipCaptions(clipId: string, segments: CaptionLine[]): 
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ segments }),
+  });
+  return handleJson<ClipOut>(res);
+}
+
+// Cortes internos — remove trecho(s) do MEIO do clipe (ver app/routers/
+// clip_cuts.py). `keep_segments: []` remove o override e volta ao clipe
+// normal (sem cortes internos).
+export async function getClipCuts(clipId: string): Promise<CutSegmentsOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/cuts`);
+  return handleJson<CutSegmentsOut>(res);
+}
+
+export async function setClipCuts(clipId: string, keepSegments: CutSegment[]): Promise<ClipOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/cuts`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keep_segments: keepSegments }),
   });
   return handleJson<ClipOut>(res);
 }

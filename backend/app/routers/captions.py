@@ -25,7 +25,7 @@ from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
 from app.services import hashtags
-from app.services.clip_rendering import resolve_job_render_defaults, safe_rerender
+from app.services.clip_rendering import remap_clip_segments, remap_pan_track, resolve_job_render_defaults, safe_rerender
 from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
 
 router = APIRouter(tags=["captions"])
@@ -120,23 +120,32 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
     _validate_caption_lines(payload.segments, clip_duration)
 
     # Lista vazia = remove o override (volta pro Whisper); senão persiste os
-    # tempos/texto exatamente como vieram (já relativos ao clipe).
+    # tempos/texto exatamente como vieram (já relativos ao clipe, mesmo
+    # sistema de coordenadas PRÉ-corte de Clip.cut_segments — ver
+    # app/routers/clip_cuts.py). Guardar sempre em coordenadas pré-corte
+    # (nunca já remapeadas) é o mesmo motivo de Clip.manual_pan_keyframes
+    # nunca ser sobrescrito remapeado: cortes internos podem mudar depois
+    # (PUT /clips/{id}/cuts) sem invalidar a correção de texto já feita.
     override = [{"start": ln.start, "end": ln.end, "text": ln.text.strip()} for ln in payload.segments] or None
     clip.set_caption_segments_override(override)
 
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_captions.srt"
-    srt_path = None
+    # Cortes internos (se houver) precisam ser respeitados aqui — sem isso,
+    # editar só o texto da legenda reverteria silenciosamente um corte
+    # interno já configurado (ver app/routers/clip_cuts.py).
+    cut_segments = clip.get_cut_segments()
 
     if override is not None:
-        # O override JÁ É o conteúdo final da legenda, em tempo relativo ao
-        # clipe (offset=0) — diferente do fluxo normal, aqui NÃO se usa
-        # segments_overlapping (isso é só pra filtrar a transcrição bruta do
-        # Whisper por sobreposição, o override não precisa desse filtro).
-        override_segments = [Segment(start=s["start"], end=s["end"], text=s["text"]) for s in override]
-        clip_text = " ".join(seg.text for seg in override_segments).strip()
-        if defaults.captions_enabled and override_segments:
-            write_srt(override_segments, tmp_srt_path, offset=0.0)
-            srt_path = tmp_srt_path
+        # O override é armazenado em tempo relativo ao início do CLIPE
+        # (pré-corte) — soma `clip.start_time` de volta só pra reaproveitar
+        # `remap_clip_segments`, que espera tempos ABSOLUTOS no vídeo
+        # original e já cuida de descontar o offset E remapear pelos cortes
+        # internos numa passada só (mesma função usada por recut_clip/
+        # clip_cuts.py, evita ter uma terceira forma de calcular isso).
+        override_segments = [
+            Segment(start=s["start"] + clip.start_time, end=s["end"] + clip.start_time, text=s["text"])
+            for s in override
+        ]
+        srt_segments, clip_text = remap_clip_segments(override_segments, clip.start_time, cut_segments)
     else:
         # Override removido: volta a derivar a legenda da transcrição do
         # Whisper pro intervalo atual do clipe, igual ao recut normal.
@@ -144,10 +153,18 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
         clip_segments = (
             segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
         )
-        clip_text = " ".join(seg.text for seg in clip_segments).strip()
-        if defaults.captions_enabled and clip_segments:
-            write_srt(clip_segments, tmp_srt_path, offset=clip.start_time)
-            srt_path = tmp_srt_path
+        srt_segments, clip_text = remap_clip_segments(clip_segments, clip.start_time, cut_segments)
+
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_captions.srt"
+    srt_path = None
+    if defaults.captions_enabled and srt_segments:
+        write_srt(srt_segments, tmp_srt_path, offset=0.0)
+        srt_path = tmp_srt_path
+
+    # Pan manual (se houver) também precisa do mesmo remapeamento pelos
+    # cortes internos só pra ESSA renderização — o valor salvo continua
+    # pré-corte (ver docstring de remap_pan_track).
+    render_pan_track = remap_pan_track(clip.get_manual_pan_keyframes(), cut_segments)
 
     safe_rerender(
         Path(video.filepath),
@@ -167,7 +184,8 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
         # Reaproveita o pan manual já configurado nesse clipe (se houver) —
         # editar só a legenda não pode silenciosamente jogar fora um zoom
         # manual que o usuário já tinha ajustado (ver app/routers/pan.py).
-        manual_pan_track=clip.get_manual_pan_keyframes(),
+        manual_pan_track=render_pan_track,
+        keep_segments=cut_segments,
     )
 
     clip.transcript_text = clip_text

@@ -52,6 +52,92 @@ def probe_resolution(video_path: Path) -> tuple[int, int]:
     return int(stream["width"]), int(stream["height"])
 
 
+def _has_audio_stream(video_path: Path) -> bool:
+    """Verifica se o vídeo tem faixa de áudio. Necessário saber ANTES de montar
+    o filtro de concat dos cortes internos (`keep_segments`): referenciar
+    "0:a" num filtro `atrim` quando o vídeo não tem áudio nenhum QUEBRA o
+    ffmpeg ("Stream specifier 'a' in filtergraph ... matches no streams"),
+    diferente do "-map 0:a?" de sempre, que tolera a ausência numa boa."""
+    cmd = [
+        "ffprobe", "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=index", "-of", "json", str(video_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return False
+    try:
+        return bool(json.loads(result.stdout).get("streams"))
+    except (ValueError, KeyError):
+        return False
+
+
+def _is_noop_keep_segments(keep_segments: list[tuple[float, float]] | None, clip_duration: float) -> bool:
+    """True quando `keep_segments` não representa nenhum corte interno de
+    verdade: None, lista vazia, ou um único segmento cobrindo o clipe
+    inteiro (dentro de uma tolerância pequena pra erro de ponto flutuante)."""
+    if not keep_segments:
+        return True
+    if len(keep_segments) == 1:
+        s, e = keep_segments[0]
+        return s <= 0.01 and e >= clip_duration - 0.01
+    return False
+
+
+def remap_time_through_cuts(t: float, keep_segments: list[tuple[float, float]]) -> float | None:
+    """Remapeia um instante `t` no sistema de coordenadas ORIGINAL do clipe
+    (antes de remover os trechos internos) pro tempo equivalente DEPOIS do
+    corte — soma a duração de cada segmento MANTIDO que vem inteiramente
+    antes de `t`. Retorna None se `t` cai dentro de um trecho REMOVIDO (não
+    sobra rastro dele no resultado final) — inclusive antes do primeiro
+    segmento mantido ou depois do último.
+
+    `keep_segments` precisa estar ordenado e sem overlap (garantido pelo
+    validador do endpoint PUT /clips/{id}/cuts).
+    """
+    kept_before = 0.0
+    for seg_start, seg_end in keep_segments:
+        if t < seg_start:
+            return None  # buraco removido antes desse segmento (ou antes do primeiro de todos)
+        if t <= seg_end:
+            return kept_before + (t - seg_start)
+        kept_before += seg_end - seg_start
+    return None  # depois do último segmento mantido — também removido
+
+
+def remap_range_through_cuts(
+    seg_start: float, seg_end: float, keep_segments: list[tuple[float, float]]
+) -> tuple[float, float] | None:
+    """Remapeia um intervalo [seg_start, seg_end) — tipicamente uma linha de
+    legenda — pro sistema pós-corte, usando `remap_time_through_cuts`.
+
+    Decisão de design (documentada aqui por ser importante pra quem for
+    mexer depois): se o INÍCIO do intervalo já cai num trecho removido, a
+    linha inteira é DESCARTADA (retorna None) — preferimos perder uma
+    legenda inteira a arriscar ela "pular" de um trecho do vídeo pro outro
+    sem relação nenhuma com o que está sendo dito naquele momento. Já se só
+    o FIM cai num buraco (a fala atravessa a borda de um corte), a linha é
+    TRUNCADA no fim do segmento mantido em que ela começou — geralmente
+    melhor mostrar a legenda um pouco menos tempo do que sumir com ela por
+    completo quando a maior parte da fala sobreviveu ao corte.
+    """
+    new_start = remap_time_through_cuts(seg_start, keep_segments)
+    if new_start is None:
+        return None
+
+    new_end = remap_time_through_cuts(seg_end, keep_segments)
+    if new_end is None:
+        # Atravessa a borda de um corte: trunca no fim do segmento mantido
+        # em que a linha começou.
+        for s0, s1 in keep_segments:
+            if s0 <= seg_start <= s1:
+                new_end = remap_time_through_cuts(s1, keep_segments)
+                break
+
+    if new_end is None or new_end <= new_start:
+        return None
+    return new_start, new_end
+
+
 def extract_audio(video_path: Path, output_wav: Path) -> None:
     """Extrai o áudio em WAV mono 16kHz — formato esperado pelo Whisper."""
     cmd = [
@@ -264,6 +350,7 @@ def cut_and_render_vertical(
     caption_font_family: str = "DejaVu Sans",
     streamer_region: tuple[int, int, int, int] | None = None,
     manual_pan_track: list[tuple[float, float]] | None = None,
+    keep_segments: list[tuple[float, float]] | None = None,
 ) -> None:
     """Corta o trecho [start, end] do vídeo e renderiza em 1080x1920 (9:16),
     30fps, com legenda queimada (se fornecida), marca d'água/logo (se
@@ -282,8 +369,26 @@ def cut_and_render_vertical(
     acompanha o rosto (`manual_pan_track` se fornecido pelo usuário, senão
     `face_detection.track_horizontal_pan` automático) — cai pro crop central
     estático se nenhum dos dois achar nada confiável.
+
+    `keep_segments`: lista de (início, fim) em segundos relativos a `start`
+    (0 = `start`) dos trechos do MEIO do clipe que devem sobreviver — usado
+    pra remover um pedaço qualquer (silêncio, fala descartada) sem deixar
+    buraco no resultado final. Quando representa mais de um pedaço (ou um
+    pedaço só que não cobre o clipe inteiro), o vídeo original é recortado
+    em cada sub-trecho e concatenado (filtro `concat` do ffmpeg) ANTES de
+    qualquer outro estágio do pipeline — o resto (scale/crop/pan, legenda,
+    watermark) roda em cima do resultado já concatenado, sem saber que
+    existiu um corte no meio. `None` ou um segmento cobrindo o clipe inteiro
+    == comportamento de sempre (sem cortes internos).
     """
     duration = end - start
+    has_internal_cuts = not _is_noop_keep_segments(keep_segments, duration)
+    if has_internal_cuts:
+        # A duração final não é mais `end - start`: é a soma só dos pedaços
+        # mantidos (os buracos removidos não contam). `-t` no fim do comando
+        # usa esse valor — um pouco de folga (poucos ms) evita que arredonda-
+        # mento de ponto flutuante corte o último frame do último pedaço.
+        duration = sum(seg_end - seg_start for seg_start, seg_end in keep_segments)
     has_watermark = watermark_path is not None and watermark_path.exists()
     # Um .srt vazio (0 bytes) acontece quando o trecho não tem fala detectada
     # (ex: só música/efeitos) — nesse caso o filtro "subtitles" do ffmpeg/libass
@@ -300,6 +405,37 @@ def cut_and_render_vertical(
     # -filter_complex) fazendo basicamente a mesma coisa; filter_complex é um
     # superconjunto de -vf, então não muda o resultado do caso simples.
     stages: list[str] = []
+
+    # `video_src`/`audio_map` apontam pro que o resto do pipeline deve usar
+    # como "o vídeo/áudio de entrada" — normalmente o próprio input 0, mas
+    # quando há cortes internos (`keep_segments`) viram a saída do concat
+    # montado abaixo. Só existe UM lugar (aqui) que decide isso: o resto da
+    # função nem precisa saber que existiu um corte no meio.
+    video_src = "0:v"
+    audio_map = "0:a?"
+
+    if has_internal_cuts:
+        # `-ss start` (mais abaixo, no comando) já reposiciona o timestamp 0
+        # do stream decodificado pro início do CLIPE — por isso os tempos de
+        # `keep_segments` (relativos ao início do clipe) podem ser usados
+        # DIRETO como start/end do `trim`/`atrim`, sem somar `start` de novo
+        # (mesma convenção já usada pelo `manual_pan_track`/legenda no resto
+        # do arquivo).
+        has_audio = _has_audio_stream(video_path)
+        concat_inputs: list[str] = []
+        for i, (seg_start, seg_end) in enumerate(keep_segments):
+            stages.append(f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS[vcut{i}]")
+            concat_inputs.append(f"[vcut{i}]")
+            if has_audio:
+                stages.append(f"[0:a]atrim=start={seg_start}:end={seg_end},asetpts=PTS-STARTPTS[acut{i}]")
+                concat_inputs.append(f"[acut{i}]")
+        n = len(keep_segments)
+        if has_audio:
+            stages.append(f"{''.join(concat_inputs)}concat=n={n}:v=1:a=1[vcat][acat]")
+            audio_map = "[acat]"
+        else:
+            stages.append(f"{''.join(concat_inputs)}concat=n={n}:v=1:a=0[vcat]")
+        video_src = "vcat"
 
     def _subtitles_filter() -> str:
         # ffmpeg exige escapar ':' no path do filtro subtitles no Linux
@@ -324,13 +460,25 @@ def cut_and_render_vertical(
     if streamer_region is not None:
         sx, sy, sw, sh = streamer_region
         bottom_h = 1920 - STREAMER_TOP_HEIGHT_PX
+        # `video_src` é consumido DUAS vezes aqui (recorte do streamer e
+        # recorte do gameplay) — usar o mesmo label do ffmpeg duas vezes como
+        # entrada de filtros diferentes SEM um `split` explícito é uma
+        # armadilha real: pra um input bruto do demuxer (tipo "0:v") o ffmpeg
+        # duplica sozinho sem problema, mas pra saída de OUTRO filtro (como o
+        # "vcat" do concat dos cortes internos) o segundo consumidor pode
+        # silenciosamente "perder" o efeito da cadeia anterior — sem erro
+        # nenhum, só o resultado errado (confirmado testando: o segundo
+        # consumidor lia o vídeo como se os cortes internos não tivessem
+        # acontecido). `split` resolve duplicando o stream de forma explícita
+        # — inofensivo mesmo quando `video_src` já era "0:v".
+        stages.append(f"[{video_src}]split=2[{video_src}_cam][{video_src}_game]")
         stages.append(
-            f"[0:v]crop={sw}:{sh}:{sx}:{sy},"
+            f"[{video_src}_cam]crop={sw}:{sh}:{sx}:{sy},"
             f"scale=1080:{STREAMER_TOP_HEIGHT_PX}:force_original_aspect_ratio=increase,"
             f"crop=1080:{STREAMER_TOP_HEIGHT_PX}[camcrop]"
         )
         stages.append(
-            f"[0:v]scale=1080:{bottom_h}:force_original_aspect_ratio=increase,"
+            f"[{video_src}_game]scale=1080:{bottom_h}:force_original_aspect_ratio=increase,"
             f"crop=1080:{bottom_h}[gamecrop]"
         )
         # A legenda é queimada AQUI, na fatia do gameplay (1080x{bottom_h}),
@@ -368,20 +516,33 @@ def cut_and_render_vertical(
             if scaled_w > 1080:
                 # `manual_pan_track` (definido pelo usuário no editor) tem
                 # prioridade sobre a detecção automática — ver Clip.manual_pan_keyframes.
-                pan_track = (
-                    manual_pan_track if manual_pan_track is not None
-                    else face_detection.track_horizontal_pan(video_path, start, end)
-                )
+                # Espera-se que já venha remapeado pro sistema PÓS-CORTE (ver
+                # remap_time_through_cuts) quando `keep_segments` está ativo —
+                # essa função só consome o rastro, não sabe nada de cortes.
+                if manual_pan_track is not None:
+                    pan_track = manual_pan_track
+                elif not has_internal_cuts:
+                    pan_track = face_detection.track_horizontal_pan(video_path, start, end)
+                else:
+                    # Detecção automática amostra o trecho ORIGINAL inteiro
+                    # (com os buracos ainda presentes) e não tem como saber
+                    # quais pedaços vão sumir — os tempos resultantes não
+                    # bateriam com a linha do tempo já concatenada. Sem um
+                    # pan manual (já remapeado) pra usar no lugar, mais seguro
+                    # cair pro crop central estático do que aplicar um pan
+                    # deslocado. Limitação conhecida: auto-pan não funciona
+                    # junto com cortes internos, só o manual.
+                    pan_track = None
                 if pan_track:
                     pan_expr = _build_pan_crop_x_expr(pan_track, scaled_w)
         except Exception:  # noqa: BLE001 — é um "extra", nunca deve derrubar o corte
             logger.exception("Falha no rastreamento de pan (%s) — usando crop central.", video_path)
 
         if pan_expr is not None:
-            stages.append(f"[0:v]scale={scaled_w}:1920[vscaled]")
+            stages.append(f"[{video_src}]scale={scaled_w}:1920[vscaled]")
             stages.append(f"[vscaled]crop=1080:1920:x='{pan_expr}':y=0[vbase]")
         else:
-            stages.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
+            stages.append(f"[{video_src}]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
         current = "vbase"
         if has_subtitles:
             stages.append(f"[{current}]{_subtitles_filter()}[vsub]")
@@ -404,10 +565,16 @@ def cut_and_render_vertical(
         stages.append(f"[{current}][wm]overlay={x}:{y}[vout]")
         current = "vout"
 
-    cmd += ["-filter_complex", ";".join(stages), "-map", f"[{current}]", "-map", "0:a?"]
+    cmd += ["-filter_complex", ";".join(stages), "-map", f"[{current}]", "-map", audio_map]
+
+    # Com cortes internos, `duration` já é a soma exata dos pedaços mantidos
+    # (o concat não produz nada além disso) — uma folga pequena evita que
+    # arredondamento de ponto flutuante corte o últimíssimo frame por engano;
+    # sem cortes internos, mantém o "-t" exato de sempre (end - start).
+    output_duration = duration + 0.05 if has_internal_cuts else duration
 
     cmd += [
-        "-t", str(duration),
+        "-t", str(output_duration),
         "-r", "30",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k",

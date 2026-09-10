@@ -23,7 +23,12 @@ from app.schemas import (
     validate_caption_style,
 )
 from app.services import hashtags
-from app.services.clip_rendering import resolve_job_render_defaults, safe_rerender
+from app.services.clip_rendering import (
+    remap_clip_segments,
+    remap_pan_track,
+    resolve_job_render_defaults,
+    safe_rerender,
+)
 from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
 
 router = APIRouter(tags=["clips"])
@@ -102,17 +107,19 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     caption_style = payload.caption_style or defaults.caption_style
     caption_font_family = payload.caption_font_family or defaults.caption_font_family
 
-    # Um pan MANUAL (ver Clip.manual_pan_keyframes) e um override MANUAL de
-    # legenda (ver Clip.caption_segments_override) são definidos em segundos
-    # relativos ao início do corte ATUAL — se o intervalo muda aqui, os dois
-    # apontariam pro momento errado do vídeo/corte. Mais seguro descartar e
-    # voltar pro automático (detecção de rosto / transcrição do Whisper) do
-    # que aplicar algo deslocado silenciosamente (o usuário pode reconfigurar
-    # os dois depois do novo recorte via PUT /clips/{id}/pan e
-    # PUT /clips/{id}/captions).
+    # Um pan MANUAL (ver Clip.manual_pan_keyframes), um override MANUAL de
+    # legenda (ver Clip.caption_segments_override) e cortes INTERNOS (ver
+    # Clip.cut_segments/app/routers/clip_cuts.py) são todos definidos em
+    # segundos relativos ao início do corte ATUAL — se o intervalo muda aqui,
+    # os três apontariam pro momento errado do vídeo/corte. Mais seguro
+    # descartar todos e voltar pro automático (detecção de rosto/transcrição
+    # do Whisper/clipe sem cortes internos) do que aplicar algo deslocado
+    # silenciosamente (o usuário pode reconfigurar os três depois do novo
+    # recorte via PUT /clips/{id}/pan, /captions e /cuts).
     time_changed = start_time != clip.start_time or end_time != clip.end_time
     manual_pan_track = None if time_changed else clip.get_manual_pan_keyframes()
     caption_override = None if time_changed else clip.get_caption_segments_override()
+    cut_segments = None if time_changed else clip.get_cut_segments()
 
     tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut.srt"
     srt_path = None
@@ -120,31 +127,35 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     if caption_override is not None:
         # Intervalo não mudou e existe uma legenda editada manualmente pra
         # esse clipe — reaproveita o TEXTO editado (já relativo ao clipe,
-        # offset=0) em vez de recalcular a legenda pura do Whisper, senão um
-        # recut só de estilo (fonte/cor) apagaria a correção que o usuário já
-        # tinha feito.
-        override_segments = [Segment(start=s["start"], end=s["end"], text=s["text"]) for s in caption_override]
-        clip_text = " ".join(seg.text for seg in override_segments).strip()
-        if captions_enabled and override_segments:
-            write_srt(override_segments, tmp_srt_path, offset=0.0)
+        # mesmo sistema de coordenadas PRÉ-corte de cut_segments) em vez de
+        # recalcular a legenda pura do Whisper, senão um recut só de estilo
+        # (fonte/cor) apagaria a correção que o usuário já tinha feito.
+        # Ainda passa por `remap_clip_segments` pra respeitar cortes internos
+        # ativos — o truque de somar `start_time` de volta é só pra reusar a
+        # mesma função que espera tempos ABSOLUTOS (ela subtrai de novo).
+        override_segments = [
+            Segment(start=s["start"] + start_time, end=s["end"] + start_time, text=s["text"])
+            for s in caption_override
+        ]
+        srt_segments, clip_text = remap_clip_segments(override_segments, start_time, cut_segments)
+        if captions_enabled and srt_segments:
+            write_srt(srt_segments, tmp_srt_path, offset=0.0)
             srt_path = tmp_srt_path
     else:
         # Recalcula os segmentos de transcrição que caem no NOVO intervalo —
         # usado tanto pra montar a legenda (se habilitada) quanto pra
         # atualizar transcript_text/hashtags do clipe, que senão ficariam
-        # descrevendo o trecho antigo (já descartado).
+        # descrevendo o trecho antigo (já descartado). `remap_clip_segments`
+        # cuida do offset pro novo início do corte E do remapeamento pelos
+        # cortes internos (se ainda válidos) numa passada só.
         transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
         clip_segments = segments_overlapping(transcript_segments, start_time, end_time) if transcript_segments else []
-        clip_text = " ".join(seg.text for seg in clip_segments).strip()
-
-        # .srt recalculado com offset pro novo início do corte — só existe (e
-        # só é passado adiante) se a legenda estiver habilitada pra esse
-        # render; antes o recut sempre rodava sem legenda nenhuma por
-        # simplicidade, mas com os segmentos já recalculados aqui não custa
-        # nada religar direito.
-        if captions_enabled and clip_segments:
-            write_srt(clip_segments, tmp_srt_path, offset=start_time)
+        srt_segments, clip_text = remap_clip_segments(clip_segments, start_time, cut_segments)
+        if captions_enabled and srt_segments:
+            write_srt(srt_segments, tmp_srt_path, offset=0.0)
             srt_path = tmp_srt_path
+
+    render_pan_track = remap_pan_track(manual_pan_track, cut_segments)
 
     safe_rerender(
         Path(video.filepath),
@@ -161,7 +172,8 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
         caption_style=caption_style,
         caption_font_family=caption_font_family,
         streamer_region=defaults.streamer_region,
-        manual_pan_track=manual_pan_track,
+        manual_pan_track=render_pan_track,
+        keep_segments=cut_segments,
     )
 
     clip.transcript_text = clip_text
@@ -171,6 +183,7 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     if time_changed:
         clip.set_manual_pan_keyframes(None)
         clip.set_caption_segments_override(None)
+        clip.set_cut_segments(None)
     db.commit()
     db.refresh(clip)
 

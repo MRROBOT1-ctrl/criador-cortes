@@ -148,6 +148,16 @@ class Clip(Base):
     # invalidar isso do mesmo jeito que já invalida o pan manual.
     caption_segments_override = Column(Text, nullable=True)
 
+    # Cortes internos (ver app/routers/clip_cuts.py e
+    # app/services/video_cutter.py::cut_and_render_vertical, `keep_segments`)
+    # — JSON: [[inicio, fim], ...] em segundos relativos ao INÍCIO DO CLIPE
+    # (0 = start_time), ORDENADOS e SEM OVERLAP, representando os trechos que
+    # devem ser MANTIDOS (o resto vira "buraco" removido e some do vídeo
+    # final). NULL/lista com um único par cobrindo o clipe inteiro = sem
+    # cortes internos (comportamento de sempre). Pares (não objetos) pra
+    # bater 1:1 com o formato aceito pelo endpoint e pelo cutter.
+    cut_segments = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     job = relationship("Job", back_populates="clips")
@@ -177,6 +187,17 @@ class Clip(Base):
             data = json.loads(self.caption_segments_override)
             return [{"start": float(s["start"]), "end": float(s["end"]), "text": str(s["text"])} for s in data]
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            return None
+
+    def set_cut_segments(self, segments: list[tuple[float, float]] | None) -> None:
+        self.cut_segments = json.dumps(segments) if segments else None
+
+    def get_cut_segments(self) -> list[tuple[float, float]] | None:
+        if not self.cut_segments:
+            return None
+        try:
+            return [(float(s), float(e)) for s, e in json.loads(self.cut_segments)]
+        except (ValueError, TypeError, json.JSONDecodeError):
             return None
 
 

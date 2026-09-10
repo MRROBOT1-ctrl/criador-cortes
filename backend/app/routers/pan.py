@@ -19,7 +19,12 @@ from app.database import get_db
 from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
-from app.services.clip_rendering import resolve_job_render_defaults, safe_rerender
+from app.services.clip_rendering import (
+    remap_clip_segments,
+    remap_pan_track,
+    resolve_job_render_defaults,
+    safe_rerender,
+)
 from app.services.transcription import load_transcript_segments, segments_overlapping, write_srt
 from app.config import settings
 
@@ -96,16 +101,28 @@ def set_pan_keyframes(clip_id: str, payload: PanKeyframesIn, db: Session = Depen
 
     # A legenda/hashtags não mudam aqui (só o enquadramento) — reaproveita o
     # texto já transcrito pro intervalo atual do clipe pra religar a mesma
-    # legenda de sempre, sem precisar de um recut completo.
+    # legenda de sempre, sem precisar de um recut completo. Se o clipe tiver
+    # cortes internos (ver app/routers/clip_cuts.py), a legenda precisa
+    # passar pelo mesmo remapeamento de tempo de sempre — `remap_clip_segments`
+    # cuida disso (e não faz nada além do offset de sempre se não houver
+    # cortes internos).
+    cut_segments = clip.get_cut_segments()
     transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
     clip_segments = (
         segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
     )
+    srt_segments, _ = remap_clip_segments(clip_segments, clip.start_time, cut_segments)
     tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_pan.srt"
     srt_path = None
-    if defaults.captions_enabled and clip_segments:
-        write_srt(clip_segments, tmp_srt_path, offset=clip.start_time)
+    if defaults.captions_enabled and srt_segments:
+        write_srt(srt_segments, tmp_srt_path, offset=0.0)
         srt_path = tmp_srt_path
+
+    # Os keyframes recém-mandados pelo usuário estão nas coordenadas do
+    # clipe ATUAL (pré-corte) — precisam do mesmo remapeamento pra bater com
+    # a linha do tempo pós-concat antes de renderizar (o que fica salvo no
+    # banco continua pré-corte, ver docstring de remap_pan_track).
+    render_pan_track = remap_pan_track(keyframes, cut_segments)
 
     safe_rerender(
         Path(video.filepath),
@@ -122,7 +139,8 @@ def set_pan_keyframes(clip_id: str, payload: PanKeyframesIn, db: Session = Depen
         caption_style=defaults.caption_style,
         caption_font_family=defaults.caption_font_family,
         streamer_region=None,
-        manual_pan_track=keyframes,
+        manual_pan_track=render_pan_track,
+        keep_segments=cut_segments,
     )
 
     db.commit()
