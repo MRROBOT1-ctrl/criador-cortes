@@ -4,6 +4,7 @@ adiciona uma camada Python em cima do ffmpeg sem necessidade aqui).
 """
 import json
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -59,6 +60,116 @@ def extract_audio(video_path: Path, output_wav: Path) -> None:
         str(output_wav),
     ]
     _run(cmd)
+
+
+def _escape_concat_list_path(path: Path) -> str:
+    """Escapa um caminho pra entrar numa linha `file '...'` do demuxer concat
+    do ffmpeg — a sintaxe dele é a mesma de um shell POSIX simples: uma aspa
+    simples dentro do caminho precisa virar `'\\''` (fecha a aspa, escapa uma
+    aspa literal, reabre a aspa)."""
+    return str(path).replace("'", "'\\''")
+
+
+def _concat_via_demuxer(clip_paths: list[Path], list_file: Path, output_path: Path) -> None:
+    """Concatena sem reencodar (`-c copy`) via demuxer concat do ffmpeg —
+    rápido e sem perda de qualidade, mas só funciona se TODOS os clipes
+    tiverem exatamente os mesmos parâmetros de codec/timebase (é o caso aqui,
+    já que todo clipe sai do mesmo `cut_and_render_vertical` acima). Levanta
+    FFmpegError se o ffmpeg falhar — o chamador decide se cai pro fallback
+    com reencode."""
+    list_file.write_text(
+        "\n".join(f"file '{_escape_concat_list_path(p)}'" for p in clip_paths) + "\n",
+        encoding="utf-8",
+    )
+    cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", str(list_file), "-c", "copy", str(output_path),
+    ]
+    _run(cmd)
+
+
+def _concat_via_filter_reencode(clip_paths: list[Path], output_path: Path) -> None:
+    """Fallback pra quando o `-c copy` não funciona (parâmetros de codec
+    divergentes entre os clipes — ex: um com watermark/legenda e outro sem
+    pode ainda assim divergir em detalhes do stream de áudio/vídeo). Mais
+    lento porque reencoda tudo, mas funciona mesmo com entradas heterogêneas
+    já que o filtro `concat` decodifica cada uma antes de juntar."""
+    cmd = ["ffmpeg", "-y"]
+    for p in clip_paths:
+        cmd += ["-i", str(p)]
+
+    n = len(clip_paths)
+    filter_inputs = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(n))
+    cmd += [
+        "-filter_complex", f"{filter_inputs}concat=n={n}:v=1:a=1[outv][outa]",
+        "-map", "[outv]", "-map", "[outa]",
+        "-r", "30",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        str(output_path),
+    ]
+    _run(cmd)
+
+
+def concat_clips(clip_paths: list[Path], output_path: Path, tmp_dir: Path) -> None:
+    """Junta vários clipes já renderizados (mesma ordem da lista) num único
+    arquivo de saída.
+
+    Tenta primeiro o concat "burro" via demuxer (`-c copy`, sem reencode —
+    todos os clipes já saem de `cut_and_render_vertical` com o mesmo
+    1080x1920/30fps/libx264/aac, então na imensa maioria dos casos os
+    parâmetros batem e isso é quase instantâneo). Se o ffmpeg falhar OU o
+    resultado sair com duração muito diferente da soma dos clipes de entrada
+    (sintoma comum de concat "silenciosamente quebrado" — ex: só o primeiro
+    clipe fica no arquivo final quando os parâmetros divergem sutilmente),
+    descarta e cai pro fallback com reencode via filtro `concat`, que sempre
+    funciona custando mais tempo de processamento.
+
+    `output_path` só é sobrescrito no final, com troca atômica — uma falha
+    no meio do processo não deve corromper um compilado anterior válido.
+    """
+    if not clip_paths:
+        raise ValueError("Lista de clipes vazia — nada para concatenar.")
+
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_output = output_path.with_suffix(".compile_tmp.mp4")
+    list_file = tmp_dir / "concat_list.txt"
+
+    # Caso trivial: um clipe só não precisa de concat nenhum, só copiar.
+    if len(clip_paths) == 1:
+        shutil.copyfile(clip_paths[0], tmp_output)
+        tmp_output.replace(output_path)
+        list_file.unlink(missing_ok=True)
+        return
+
+    expected_duration = sum(probe_duration(p) for p in clip_paths)
+    # Tolerância de 1.5s pro somatório: cada clipe individualmente já pode
+    # ter uma fração de segundo de folga por causa de arredondamento de
+    # frames no corte original — soma alguns clipes e essa folga cresce.
+    duration_tolerance = max(1.5, 0.05 * expected_duration)
+
+    copy_ok = False
+    try:
+        _concat_via_demuxer(clip_paths, list_file, tmp_output)
+        result_duration = probe_duration(tmp_output)
+        copy_ok = abs(result_duration - expected_duration) <= duration_tolerance
+        if not copy_ok:
+            logger.warning(
+                "Concat via -c copy saiu com duração %.2fs (esperado %.2fs) — "
+                "parâmetros de codec provavelmente divergem entre os clipes, "
+                "caindo pro fallback com reencode.",
+                result_duration, expected_duration,
+            )
+    except FFmpegError as exc:
+        logger.warning("Concat via -c copy falhou (%s) — caindo pro fallback com reencode.", exc)
+        copy_ok = False
+
+    if not copy_ok:
+        tmp_output.unlink(missing_ok=True)
+        _concat_via_filter_reencode(clip_paths, tmp_output)
+
+    list_file.unlink(missing_ok=True)
+    tmp_output.replace(output_path)  # troca atômica, só após sucesso de um dos dois caminhos
 
 
 WATERMARK_WIDTH_PX = 180  # largura fixa da logo depois de escalada, mantendo proporção

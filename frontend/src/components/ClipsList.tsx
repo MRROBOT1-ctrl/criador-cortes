@@ -1,15 +1,17 @@
 import { downloadAllUrl } from "../api";
 import type { ClipOut } from "../types";
 import { ClipCard } from "./ClipCard";
+import { JobTimeline } from "./JobTimeline";
 
 interface Props {
   jobId: string;
   clips: ClipOut[];
   onClipUpdated: (clip: ClipOut) => void;
+  onClipsReordered: (clips: ClipOut[]) => void;
   onReset: () => void;
 }
 
-export function ClipsList({ jobId, clips, onClipUpdated, onReset }: Props) {
+export function ClipsList({ jobId, clips, onClipUpdated, onClipsReordered, onReset }: Props) {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -36,11 +38,16 @@ export function ClipsList({ jobId, clips, onClipUpdated, onReset }: Props) {
       {clips.length === 0 ? (
         <p className="text-sm text-slate-400">Nenhum clipe foi gerado para este vídeo.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {clips.map((clip) => (
-            <ClipCard key={clip.id} clip={clip} onUpdated={onClipUpdated} />
-          ))}
-        </div>
+        <>
+          {clips.length > 1 && (
+            <JobTimeline jobId={jobId} clips={clips} onReordered={onClipsReordered} />
+          )}
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {clips.map((clip) => (
+              <ClipCard key={clip.id} clip={clip} onUpdated={onClipUpdated} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

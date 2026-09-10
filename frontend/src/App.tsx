@@ -41,6 +41,12 @@ export default function App() {
     setClips((current) => current?.map((c) => (c.id === updated.id ? updated : c)) ?? current);
   }
 
+  function handleClipsReordered(updated: ClipOut[]) {
+    // Vem já ordenado por index do PUT /jobs/{id}/clips/order — troca a
+    // lista inteira em vez de mesclar campo a campo, mais simples aqui.
+    setClips(updated);
+  }
+
   function handleReset() {
     setJobId(null);
     setClips(null);
@@ -123,7 +129,13 @@ export default function App() {
         )}
 
         {stage === "clips" && jobId && clips && (
-          <ClipsList jobId={jobId} clips={clips} onClipUpdated={handleClipUpdated} onReset={handleReset} />
+          <ClipsList
+            jobId={jobId}
+            clips={clips}
+            onClipUpdated={handleClipUpdated}
+            onClipsReordered={handleClipsReordered}
+            onReset={handleReset}
+          />
         )}
       </main>
     </div>
