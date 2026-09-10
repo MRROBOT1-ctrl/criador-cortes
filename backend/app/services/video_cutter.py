@@ -141,25 +141,7 @@ def cut_and_render_vertical(
     # superconjunto de -vf, então não muda o resultado do caso simples.
     stages: list[str] = []
 
-    if streamer_region is not None:
-        sx, sy, sw, sh = streamer_region
-        bottom_h = 1920 - STREAMER_TOP_HEIGHT_PX
-        stages.append(
-            f"[0:v]crop={sw}:{sh}:{sx}:{sy},"
-            f"scale=1080:{STREAMER_TOP_HEIGHT_PX}:force_original_aspect_ratio=increase,"
-            f"crop=1080:{STREAMER_TOP_HEIGHT_PX}[camcrop]"
-        )
-        stages.append(
-            f"[0:v]scale=1080:{bottom_h}:force_original_aspect_ratio=increase,"
-            f"crop=1080:{bottom_h}[gamecrop]"
-        )
-        stages.append("[camcrop][gamecrop]vstack=inputs=2[vbase]")
-    else:
-        stages.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
-
-    current = "vbase"
-
-    if has_subtitles:
+    def _subtitles_filter() -> str:
         # ffmpeg exige escapar ':' no path do filtro subtitles no Linux
         escaped = str(srt_path).replace(":", "\\:")
         # `caption_font_family` precisa ser uma fonte que exista de fato na
@@ -177,8 +159,41 @@ def cut_and_render_vertical(
             f"BorderStyle={preset['border_style']},Outline={preset['outline']},"
             f"Shadow={preset['shadow']},Alignment=2,MarginV={preset['margin_v']}"
         )
-        stages.append(f"[{current}]subtitles='{escaped}':force_style='{style}'[vsub]")
-        current = "vsub"
+        return f"subtitles='{escaped}':force_style='{style}'"
+
+    if streamer_region is not None:
+        sx, sy, sw, sh = streamer_region
+        bottom_h = 1920 - STREAMER_TOP_HEIGHT_PX
+        stages.append(
+            f"[0:v]crop={sw}:{sh}:{sx}:{sy},"
+            f"scale=1080:{STREAMER_TOP_HEIGHT_PX}:force_original_aspect_ratio=increase,"
+            f"crop=1080:{STREAMER_TOP_HEIGHT_PX}[camcrop]"
+        )
+        stages.append(
+            f"[0:v]scale=1080:{bottom_h}:force_original_aspect_ratio=increase,"
+            f"crop=1080:{bottom_h}[gamecrop]"
+        )
+        # A legenda é queimada AQUI, na fatia do gameplay (1080x{bottom_h}),
+        # ANTES do vstack com o streamer — não no canvas final já empilhado.
+        # Isso confina a legenda fisicamente à fatia de baixo (o recorte do
+        # próprio ffmpeg vira o limite: texto não pode "vazar" pra cima da
+        # divisória por mais linhas/fonte grande que tenha), em vez de só
+        # empurrá-la com MarginV a partir do fundo do frame INTEIRO (1920px)
+        # sem noção nenhuma de onde fica a linha streamer/gameplay — era
+        # assim antes e um texto longo com fonte grande cobria boa parte do
+        # streamer (confirmado visualmente num teste sintético de pior caso).
+        gamecrop_stream = "gamecrop"
+        if has_subtitles:
+            stages.append(f"[gamecrop]{_subtitles_filter()}[gamecrop_sub]")
+            gamecrop_stream = "gamecrop_sub"
+        stages.append(f"[camcrop][{gamecrop_stream}]vstack=inputs=2[vbase]")
+        current = "vbase"
+    else:
+        stages.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
+        current = "vbase"
+        if has_subtitles:
+            stages.append(f"[{current}]{_subtitles_filter()}[vsub]")
+            current = "vsub"
 
     # IMPORTANTE: "-i watermark_path" (quando existe) precisa vir DEPOIS do
     # "-i video_path" mas ANTES de qualquer opção de saída como "-t" — opções
