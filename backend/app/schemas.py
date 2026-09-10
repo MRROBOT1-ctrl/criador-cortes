@@ -109,6 +109,7 @@ class ClipOut(BaseModel):
     processed_path: str | None
     transcript_text: str | None
     hashtags: dict[str, list[str]] | None
+    video_duration: float | None  # duração do vídeo ORIGINAL — usado pelo editor (limite da timeline)
 
     class Config:
         from_attributes = True

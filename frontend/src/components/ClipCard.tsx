@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { clipFileUrl, metricsUiUrl, recutClip } from "../api";
-import type { CaptionFontFamily, CaptionStyle, ClipOut, Platform } from "../types";
-import { CaptionSection } from "./CaptionSection";
+import { clipFileUrl, metricsUiUrl } from "../api";
+import type { ClipOut, Platform } from "../types";
+import { ClipEditorModal } from "./ClipEditorModal";
 
 const PLATFORM_LABELS: Record<Platform, string> = {
   tiktok: "TikTok",
@@ -17,19 +17,8 @@ interface Props {
 
 export function ClipCard({ clip, onUpdated }: Props) {
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
-  const [recutStart, setRecutStart] = useState(clip.start_time.toFixed(2));
-  const [recutEnd, setRecutEnd] = useState(clip.end_time.toFixed(2));
-  const [recutting, setRecutting] = useState(false);
-  const [recutError, setRecutError] = useState<string | null>(null);
-  const [showEditor, setShowEditor] = useState(false);
-  // Sem valor "atual" pra refletir (ClipOut não expõe o estilo aplicado,
-  // só o Job tem isso) — parte de um default razoável que o usuário ajusta.
-  const [captionsEnabled, setCaptionsEnabled] = useState(true);
-  const [captionFontSize, setCaptionFontSize] = useState(8);
-  const [captionColor, setCaptionColor] = useState("#FFFFFF");
-  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("bold_outline");
-  const [captionFontFamily, setCaptionFontFamily] = useState<CaptionFontFamily>("DejaVu Sans");
-  // Muda a cada recorte bem-sucedido para forçar o <video> a recarregar o
+  const [editorOpen, setEditorOpen] = useState(false);
+  // Muda a cada edição bem-sucedida para forçar o <video> a recarregar o
   // arquivo (mesma URL, conteúdo novo — o navegador cacheia por padrão).
   const [videoVersion, setVideoVersion] = useState(0);
 
@@ -43,32 +32,9 @@ export function ClipCard({ clip, onUpdated }: Props) {
     }
   }
 
-  async function handleRecut() {
-    setRecutError(null);
-    const start = Number(recutStart);
-    const end = Number(recutEnd);
-    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
-      setRecutError("Informe início e fim válidos (fim maior que início).");
-      return;
-    }
-    setRecutting(true);
-    try {
-      const updated = await recutClip(clip.id, {
-        start_time: start,
-        end_time: end,
-        captions_enabled: captionsEnabled,
-        caption_font_size: captionFontSize,
-        caption_color: captionColor,
-        caption_style: captionStyle,
-        caption_font_family: captionFontFamily,
-      });
-      onUpdated(updated);
-      setVideoVersion((v) => v + 1);
-    } catch (err) {
-      setRecutError(err instanceof Error ? err.message : "Falha ao editar o clipe.");
-    } finally {
-      setRecutting(false);
-    }
+  function handleUpdated(updated: ClipOut) {
+    onUpdated(updated);
+    setVideoVersion((v) => v + 1);
   }
 
   const hashtagEntries = Object.entries(clip.hashtags ?? {}) as [Platform, string[]][];
@@ -120,64 +86,14 @@ export function ClipCard({ clip, onUpdated }: Props) {
         </div>
       )}
 
-      <div className="flex flex-col gap-2 rounded-lg border border-slate-800 p-2.5">
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setShowEditor((v) => !v)}
-          className="text-left text-xs font-semibold text-slate-300 hover:text-slate-100"
+          onClick={() => setEditorOpen(true)}
+          className="flex-1 rounded-lg bg-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-100 hover:bg-slate-600"
         >
-          {showEditor ? "▾" : "▸"} Editar clipe (tempo, legenda, fonte...)
+          ✂️ Editar
         </button>
-
-        {showEditor && (
-          <>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                step="0.1"
-                value={recutStart}
-                onChange={(e) => setRecutStart(e.target.value)}
-                className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
-                aria-label="Início (s)"
-              />
-              <span className="text-xs text-slate-500">até</span>
-              <input
-                type="number"
-                step="0.1"
-                value={recutEnd}
-                onChange={(e) => setRecutEnd(e.target.value)}
-                className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
-                aria-label="Fim (s)"
-              />
-            </div>
-
-            <CaptionSection
-              captionsEnabled={captionsEnabled}
-              fontSize={captionFontSize}
-              color={captionColor}
-              style={captionStyle}
-              fontFamily={captionFontFamily}
-              onCaptionsEnabledChange={setCaptionsEnabled}
-              onFontSizeChange={setCaptionFontSize}
-              onColorChange={setCaptionColor}
-              onStyleChange={setCaptionStyle}
-              onFontFamilyChange={setCaptionFontFamily}
-            />
-
-            {recutError && <p className="text-xs text-red-400">{recutError}</p>}
-            <button
-              type="button"
-              onClick={handleRecut}
-              disabled={recutting}
-              className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {recutting ? "Aplicando..." : "Aplicar"}
-            </button>
-          </>
-        )}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
         <a
           href={clipFileUrl(clip.id)}
           download
@@ -194,6 +110,10 @@ export function ClipCard({ clip, onUpdated }: Props) {
           Ver métricas
         </a>
       </div>
+
+      {editorOpen && (
+        <ClipEditorModal clip={clip} onClose={() => setEditorOpen(false)} onUpdated={handleUpdated} />
+      )}
     </div>
   );
 }

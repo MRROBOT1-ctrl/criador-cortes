@@ -99,6 +99,14 @@ export function downloadAllUrl(jobId: string): string {
   return `${API_URL}/jobs/${jobId}/download`;
 }
 
+// Vídeo ORIGINAL (não o clipe já cortado) — usado só pelo editor, pra dar de
+// arrastar a linha do tempo e ver o frame real de qualquer ponto do vídeo
+// (o servidor já responde a "Range", o navegador busca só o pedaço que
+// precisa em vez do arquivo inteiro).
+export function originalVideoUrl(jobId: string): string {
+  return `${API_URL}/jobs/${jobId}/original`;
+}
+
 export function metricsUiUrl(clipId: string): string {
   return `${API_URL}/ui/metrics.html?clip_id=${clipId}`;
 }

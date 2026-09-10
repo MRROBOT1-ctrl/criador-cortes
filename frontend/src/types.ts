@@ -82,6 +82,7 @@ export interface ClipOut {
   processed_path: string | null;
   transcript_text: string | null;
   hashtags: HashtagsByPlatform | null;
+  video_duration: number | null;
 }
 
 export interface MetricIn {

@@ -40,6 +40,12 @@ de engajamento pós-publicação.
   estilo Arial/Times/Courier) e 4 presets de formato (negrito sem caixa /
   caixa preta clássica / minimalista / sem contorno) por job — e por clipe
   individual, via a edição pós-processamento acima.
+- ✅ Editor visual por clipe (estilo CapCut, `ClipEditorModal.tsx`): timeline
+  arrastável (início/fim) com prévia do vídeo ORIGINAL fazendo seek de
+  verdade (`GET /jobs/{job_id}/original`, com suporte a `Range` de verdade —
+  ver nota abaixo), + prévia ao vivo do estilo da legenda sobre o clipe já
+  gerado (fonte/cor/formato mudam na hora, sem precisar re-renderizar pra
+  ver como fica). "Aplicar" dispara o `/recut` de verdade no servidor.
 - ✅ Tela "Meus cortes" (home): lista todos os jobs já processados (com
   status, data, contagem de clipes), vira a tela inicial do app.
 - ✅ Detecção automática da janela do streamer (webcam) via OpenCV — quando
@@ -86,6 +92,7 @@ subir o serviço `frontend` do compose nesse caso).
 | GET | `/jobs/{job_id}/clips` | Lista os clipes gerados (com hashtags) |
 | GET | `/clips/{clip_id}/file` | Baixa um clipe individual (mp4) |
 | GET | `/jobs/{job_id}/download` | Baixa todos os clipes do job em ZIP |
+| GET | `/jobs/{job_id}/original` | Serve o vídeo original com suporte a `Range` (usado pelo editor pra fazer seek sem baixar o arquivo inteiro) |
 | POST | `/clips/{clip_id}/metrics` | Lança métrica manual (views/likes/comments/shares) |
 | GET | `/clips/{clip_id}/metrics` | Histórico de métricas do clipe |
 | POST | `/clips/{clip_id}/metrics/youtube-sync` | Puxa views/likes/comments atuais do YouTube |
@@ -147,7 +154,8 @@ frontend/                  # React + TypeScript (Vite, Tailwind dark-mode)
     api.ts                  # fetch nativo pro backend (VITE_API_URL)
     hooks/useJobStatus.ts   # WebSocket de status, cai pro polling se cair no meio do job
     components/             # HomeScreen, UploadForm, CaptionSection, WatermarkSection,
-                             # ProgressPanel, ClipsList, ClipCard
+                             # ProgressPanel, ClipsList, ClipCard, ClipEditorModal,
+                             # TimelineScrubber
   Dockerfile               # build com node, serve dist/ via nginx
 docker-compose.yml         # redis + backend (API) + worker + frontend (nginx)
 ```
@@ -208,6 +216,20 @@ do usuário** já publicado (ex: o podcast/live dele que já está no YouTube),
 não pra baixar conteúdo alheio em massa. `yt-dlp` fica sem versão travada no
 `requirements.txt` de propósito, porque as plataformas mudam a API/HTML
 delas com frequência e uma versão antiga do yt-dlp quebra rápido.
+
+## Nota sobre o editor visual e suporte a Range
+
+O editor (`ClipEditorModal.tsx`) faz o `<video>` do vídeo ORIGINAL fazer seek
+de verdade pra qualquer ponto (não só do trecho já cortado), o que só é
+viável servindo o arquivo com suporte a `Range` — sem isso, cada busca no
+player baixaria o vídeo inteiro (alguns GB). **Bug real encontrado
+testando:** `FileResponse` do Starlette (até pelo menos 0.38.x, a versão
+usada aqui) **não implementa Range nenhum** — sempre manda o arquivo
+inteiro e ignora o header, mesmo respondendo como se tivesse dado certo.
+Implementado manualmente em `_ranged_file_response` (`routers/download.py`)
+por cima de `StreamingResponse`, com 206 Partial Content de verdade —
+validado (`curl -H "Range: ..."`) buscando ~1MB no meio de um vídeo de 1GB
+em 15ms, em vez de baixar o arquivo inteiro.
 
 ## Nota sobre detecção de streamer (webcam)
 
