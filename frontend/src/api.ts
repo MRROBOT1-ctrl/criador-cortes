@@ -1,5 +1,15 @@
 // Cliente HTTP simples com fetch nativo — sem axios/react-query, conforme spec.
-import type { CaptionFontFamily, CaptionStyle, ClipOut, JobOut, JobSummary, UploadConfig, UploadResponse } from "./types";
+import type {
+  CaptionFontFamily,
+  CaptionStyle,
+  ClipOut,
+  JobOut,
+  JobSummary,
+  PanKeyframe,
+  PanKeyframesOut,
+  UploadConfig,
+  UploadResponse,
+} from "./types";
 
 export interface WatermarkStatus {
   exists: boolean;
@@ -129,6 +139,23 @@ export async function recutClip(clipId: string, options: ClipEditOptions): Promi
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(options),
+  });
+  return handleJson<ClipOut>(res);
+}
+
+// Zoom/crop manual por trecho (ver app/routers/pan.py) — sobrescreve o
+// rastreamento automático de rosto pra vídeo solo. Mandar `keyframes: []`
+// remove o override e volta pra detecção automática.
+export async function getClipPan(clipId: string): Promise<PanKeyframesOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/pan`);
+  return handleJson<PanKeyframesOut>(res);
+}
+
+export async function setClipPan(clipId: string, keyframes: PanKeyframe[]): Promise<ClipOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/pan`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyframes }),
   });
   return handleJson<ClipOut>(res);
 }

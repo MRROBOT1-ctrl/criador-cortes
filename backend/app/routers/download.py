@@ -136,6 +136,7 @@ def _clip_to_out(clip: Clip) -> ClipOut:
         transcript_text=clip.transcript_text,
         hashtags=json.loads(clip.hashtags) if clip.hashtags else None,
         video_duration=clip.job.video.duration if clip.job and clip.job.video else None,
+        has_streamer_region=bool(clip.job and clip.job.get_streamer_region()),
     )
 
 

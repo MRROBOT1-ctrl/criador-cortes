@@ -83,6 +83,7 @@ export interface ClipOut {
   transcript_text: string | null;
   hashtags: HashtagsByPlatform | null;
   video_duration: number | null;
+  has_streamer_region: boolean;
 }
 
 export interface MetricIn {
@@ -99,6 +100,20 @@ export interface MetricOut extends MetricIn {
   source: string;
   external_video_id: string | null;
   recorded_at: string;
+}
+
+// Zoom/crop manual por trecho (ver POST /clips/{id}/pan no backend) — cada
+// keyframe é "no segundo t (desde o início do CLIPE), foca em cx (0..1 da
+// largura do vídeo ORIGINAL)". Sobrescreve o rastreamento automático de
+// rosto pra vídeo solo (sem streamer_region).
+export interface PanKeyframe {
+  t: number;
+  cx: number;
+}
+
+export interface PanKeyframesOut {
+  keyframes: PanKeyframe[];
+  is_manual: boolean;
 }
 
 export interface UploadConfig {

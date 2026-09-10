@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { clipFileUrl, originalVideoUrl, recutClip } from "../api";
 import type { CaptionFontFamily, CaptionStyle, ClipOut } from "../types";
 import { CaptionSection } from "./CaptionSection";
+import { ManualPanEditor } from "./ManualPanEditor";
 import { TimelineScrubber } from "./TimelineScrubber";
 
 // Folga (em segundos) mostrada de cada lado do corte atual na timeline —
@@ -226,6 +227,18 @@ export function ClipEditorModal({ clip, onClose, onUpdated }: Props) {
               onFontFamilyChange={setCaptionFontFamily}
             />
           </div>
+        </section>
+
+        {/* --- Zoom/crop manual: sobrescreve o rastreamento automático de rosto --- */}
+        <section className="flex flex-col gap-2 rounded-lg border border-slate-800 p-3">
+          <p className="text-sm font-medium text-slate-300">Zoom automático em quem fala (manual)</p>
+          <ManualPanEditor
+            clip={clip}
+            sourceVideoRef={sourceVideoRef}
+            sourcePreviewFailed={sourcePreviewFailed}
+            hasStreamerRegion={clip.has_streamer_region}
+            onApplied={onUpdated}
+          />
         </section>
 
         {error && (

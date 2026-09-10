@@ -8,6 +8,7 @@ Clip    -> cada corte vertical gerado a partir de um Job.
 Metric  -> histórico de métricas de engajamento de um Clip já publicado
            (lançadas manualmente ou sincronizadas via API do YouTube).
 """
+import json
 import uuid
 from datetime import datetime
 
@@ -128,10 +129,30 @@ class Clip(Base):
     transcript_text = Column(Text, nullable=True)  # texto transcrito do trecho (p/ hashtags/UI)
     hashtags = Column(Text, nullable=True)  # JSON: {"tiktok": [...], "instagram_reels": [...], ...}
 
+    # Rastro de pan MANUAL (ver app/services/video_cutter.py::_build_pan_crop_x_expr) —
+    # JSON: [{"t": segundos_desde_o_inicio_do_clipe, "cx": fracao_0_a_1_da_largura_do_video_ORIGINAL}, ...].
+    # NULL = sem override, usa a detecção automática de rosto de sempre
+    # (app/services/face_detection.py::track_horizontal_pan) ou o crop
+    # central se ela também não achar nada. Só se aplica a vídeo SOLO (sem
+    # streamer_region — ver Job.streamer_region); não há UI/suporte ainda
+    # pra combinar pan manual com o layout de tela dividida.
+    manual_pan_keyframes = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     job = relationship("Job", back_populates="clips")
     metrics = relationship("Metric", back_populates="clip", cascade="all, delete-orphan")
+
+    def set_manual_pan_keyframes(self, keyframes: list[tuple[float, float]] | None) -> None:
+        self.manual_pan_keyframes = json.dumps(keyframes) if keyframes else None
+
+    def get_manual_pan_keyframes(self) -> list[tuple[float, float]] | None:
+        if not self.manual_pan_keyframes:
+            return None
+        try:
+            return [(float(t), float(cx)) for t, cx in json.loads(self.manual_pan_keyframes)]
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
 
 
 class Metric(Base):

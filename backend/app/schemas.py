@@ -110,6 +110,7 @@ class ClipOut(BaseModel):
     transcript_text: str | None
     hashtags: dict[str, list[str]] | None
     video_duration: float | None  # duração do vídeo ORIGINAL — usado pelo editor (limite da timeline)
+    has_streamer_region: bool  # job usa layout de tela dividida — zoom manual (POST /clips/{id}/pan) não suportado junto
 
     class Config:
         from_attributes = True

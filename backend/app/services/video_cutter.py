@@ -152,6 +152,7 @@ def cut_and_render_vertical(
     caption_style: str = "bold_outline",
     caption_font_family: str = "DejaVu Sans",
     streamer_region: tuple[int, int, int, int] | None = None,
+    manual_pan_track: list[tuple[float, float]] | None = None,
 ) -> None:
     """Corta o trecho [start, end] do vídeo e renderiza em 1080x1920 (9:16),
     30fps, com legenda queimada (se fornecida), marca d'água/logo (se
@@ -165,6 +166,11 @@ def cut_and_render_vertical(
     resolução ORIGINAL do vídeo), monta tela dividida: a região indicada
     (webcam do streamer) ocupa a faixa de cima, o crop central de sempre
     ocupa a faixa de baixo.
+
+    Sem `streamer_region`, ainda tenta um crop horizontal DINÂMICO que
+    acompanha o rosto (`manual_pan_track` se fornecido pelo usuário, senão
+    `face_detection.track_horizontal_pan` automático) — cai pro crop central
+    estático se nenhum dos dois achar nada confiável.
     """
     duration = end - start
     has_watermark = watermark_path is not None and watermark_path.exists()
@@ -249,8 +255,13 @@ def cut_and_render_vertical(
             # nenhuma pra acompanhar ninguém (cai pro estático de qualquer jeito).
             scaled_w = round(orig_w * 1920 / orig_h / 2) * 2
             if scaled_w > 1080:
-                pan_track = face_detection.track_horizontal_pan(video_path, start, end)
-                if pan_track is not None:
+                # `manual_pan_track` (definido pelo usuário no editor) tem
+                # prioridade sobre a detecção automática — ver Clip.manual_pan_keyframes.
+                pan_track = (
+                    manual_pan_track if manual_pan_track is not None
+                    else face_detection.track_horizontal_pan(video_path, start, end)
+                )
+                if pan_track:
                     pan_expr = _build_pan_crop_x_expr(pan_track, scaled_w)
         except Exception:  # noqa: BLE001 — é um "extra", nunca deve derrubar o corte
             logger.exception("Falha no rastreamento de pan (%s) — usando crop central.", video_path)
