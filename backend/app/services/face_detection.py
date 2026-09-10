@@ -127,6 +127,116 @@ def _pick_region(
     return region
 
 
+_PAN_SAMPLE_INTERVAL = 2.0  # segundos entre amostras de rastreamento horizontal
+# Quanto a posição normalizada (0..1 da largura do frame) pode variar entre
+# duas amostras consecutivas — evita "chicote" de câmera quando uma detecção
+# isolada erra (ex: pega um objeto qualquer por 1 frame só). Combinado com a
+# suavização abaixo, o resultado é um pan gradual em vez de saltos.
+_PAN_MAX_STEP = 0.12
+_PAN_SMOOTHING_ALPHA = 0.35  # média móvel exponencial
+
+
+def _fill_gaps(values: list[float | None]) -> list[float]:
+    """Interpola linearmente os `None` (amostras sem rosto detectado) usando
+    os vizinhos válidos mais próximos; extremidades sem detecção ficam com o
+    valor válido mais próximo (não dá pra interpolar além da borda)."""
+    known = [i for i, v in enumerate(values) if v is not None]
+    result = list(values)
+    for a, b in zip(known, known[1:]):
+        v0, v1 = values[a], values[b]
+        for i in range(a + 1, b):
+            frac = (i - a) / (b - a)
+            result[i] = v0 + (v1 - v0) * frac
+    for i in range(0, known[0]):
+        result[i] = values[known[0]]
+    for i in range(known[-1] + 1, len(values)):
+        result[i] = values[known[-1]]
+    return result  # type: ignore[return-value]
+
+
+def _smooth(values: list[float]) -> list[float]:
+    smoothed = [values[0]]
+    for v in values[1:]:
+        prev = smoothed[-1]
+        delta = max(-_PAN_MAX_STEP, min(_PAN_MAX_STEP, v - prev))
+        target = prev + delta
+        smoothed.append(prev + _PAN_SMOOTHING_ALPHA * (target - prev))
+    return smoothed
+
+
+def track_horizontal_pan(
+    video_path: Path,
+    start: float,
+    end: float,
+    sample_interval: float = _PAN_SAMPLE_INTERVAL,
+) -> list[tuple[float, float]] | None:
+    """Rastreia a posição horizontal do rosto dentro do trecho [start, end]
+    do vídeo (vídeo SOLO — webcam/vlog/gameplay com uma pessoa só, não pensado
+    pra distinguir vários rostos), pra permitir um crop que "acompanha" a
+    pessoa em vez do corte central fixo de sempre.
+
+    Retorna uma lista de (tempo local desde `start`, posição x normalizada
+    0..1 da largura do frame ORIGINAL), já com buracos preenchidos e
+    suavizada — ou None se não achou rosto de forma confiável na maioria das
+    amostras (best-effort, mesmo espírito de `detect_streamer_region`: melhor
+    desistir e cair pro crop central do que seguir um rastro ruim).
+    """
+    duration = end - start
+    if duration <= 0:
+        return None
+
+    cascade = _get_cascade()
+    num_samples = max(2, int(duration / sample_interval) + 1)
+    raw_t: list[float] = []
+    raw_cx: list[float | None] = []
+    frame_w = frame_h = 0
+
+    with tempfile.TemporaryDirectory(prefix="pan_track_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        for i in range(num_samples):
+            local_t = min(i * sample_interval, duration)
+            raw_t.append(local_t)
+            frame_file = tmp_path / f"frame_{i}.jpg"
+            if not _extract_frame(video_path, start + local_t, frame_file):
+                raw_cx.append(None)
+                continue
+            image = cv2.imread(str(frame_file))
+            if image is None:
+                raw_cx.append(None)
+                continue
+            h, w = image.shape[:2]
+            frame_w, frame_h = w, h
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            best_face = None
+            for min_neighbors in _MIN_NEIGHBORS_LEVELS:
+                faces = cascade.detectMultiScale(
+                    gray, scaleFactor=1.1, minNeighbors=min_neighbors,
+                    minSize=(w // 15, h // 15),
+                )
+                if len(faces):
+                    best_face = max(faces, key=lambda f: f[2] * f[3])  # maior rosto = sujeito principal
+                    break
+            if best_face is None:
+                raw_cx.append(None)
+                continue
+            fx, fy, fw_, fh_ = best_face
+            raw_cx.append((fx + fw_ / 2) / w)
+
+    detected = sum(1 for v in raw_cx if v is not None)
+    if frame_w == 0 or detected < max(2, len(raw_cx) // 2):
+        logger.info(
+            "Rastreamento de pan desistindo: rosto detectado em só %d/%d amostras — usando crop central.",
+            detected, len(raw_cx),
+        )
+        return None
+
+    filled = _fill_gaps(raw_cx)
+    smoothed = _smooth(filled)
+    logger.info("Rastreamento de pan OK: rosto detectado em %d/%d amostras.", detected, len(raw_cx))
+    return list(zip(raw_t, smoothed))
+
+
 def detect_streamer_region(
     video_path: Path,
     duration: float,

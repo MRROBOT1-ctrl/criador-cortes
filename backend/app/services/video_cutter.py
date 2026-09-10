@@ -7,6 +7,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from app.services import face_detection
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +35,20 @@ def probe_duration(video_path: Path) -> float:
         raise FFmpegError(f"ffprobe falhou: {result.stderr}")
     data = json.loads(result.stdout)
     return float(data["format"]["duration"])
+
+
+def probe_resolution(video_path: Path) -> tuple[int, int]:
+    """Retorna (largura, altura) do vídeo em pixels via ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "json", str(video_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise FFmpegError(f"ffprobe falhou: {result.stderr}")
+    stream = json.loads(result.stdout)["streams"][0]
+    return int(stream["width"]), int(stream["height"])
 
 
 def extract_audio(video_path: Path, output_wav: Path) -> None:
@@ -86,6 +102,33 @@ def _hex_to_ass_color(hex_color: str) -> str:
     hex_color = hex_color.lstrip("#")
     r, g, b = hex_color[0:2], hex_color[2:4], hex_color[4:6]
     return f"&H00{b}{g}{r}".upper()
+
+
+def _build_pan_crop_x_expr(samples: list[tuple[float, float]], scaled_w: int, crop_w: int = 1080) -> str:
+    """Constrói uma expressão do ffmpeg (usada no `x=` do filtro `crop`) que
+    interpola linearmente entre as amostras de `track_horizontal_pan`,
+    convertendo posição normalizada (0..1) em offset de crop em pixels já
+    limitado a [0, scaled_w - crop_w] (nunca deixa o crop passar da borda).
+
+    Construída de trás pra frente: cada nível é um `if(lt(t, t_próximo), ...)`
+    que interpola até o próximo ponto conhecido, caindo pro nível anterior
+    (mais recente na amostragem) caso contrário — resultado final é uma única
+    expressão aninhada, sem precisar do `sendcmd`/parâmetros dinâmicos do
+    ffmpeg (mais simples de montar e de depurar).
+    """
+    max_x = max(0, scaled_w - crop_w)
+
+    def to_crop_x(norm_cx: float) -> float:
+        x = norm_cx * scaled_w - crop_w / 2
+        return max(0.0, min(float(max_x), x))
+
+    points = [(t, to_crop_x(cx)) for t, cx in samples]
+    expr = f"{points[-1][1]:.1f}"
+    for i in range(len(points) - 2, -1, -1):
+        t0, x0 = points[i]
+        t1, x1 = points[i + 1]
+        expr = f"if(lt(t,{t1:.3f}),{x0:.1f}+({x1:.1f}-{x0:.1f})*(t-{t0:.3f})/{(t1 - t0):.6f},{expr})"
+    return expr
 
 
 # Altura (em pixels, no canvas final 1080x1920) reservada pra faixa de cima
@@ -189,7 +232,34 @@ def cut_and_render_vertical(
         stages.append(f"[camcrop][{gamecrop_stream}]vstack=inputs=2[vbase]")
         current = "vbase"
     else:
-        stages.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
+        # Vídeo solo (sem streamer_region): tenta um "zoom automático em quem
+        # fala" — rastreia a posição horizontal do rosto ao longo do PRÓPRIO
+        # trecho sendo cortado e move o crop pra acompanhar (a pessoa se
+        # inclina/anda e o corte fixo de sempre podia cortar ela fora).
+        # Best-effort, mesmo espírito do streamer_region: se não achar rosto
+        # de forma confiável, cai pro crop central estático de sempre —
+        # nunca expõe toggle nem quebra o job por causa disso.
+        pan_expr = None
+        try:
+            orig_w, orig_h = probe_resolution(video_path)
+            # Mesma conta que "scale=1080:1920:force_original_aspect_ratio=
+            # increase" faria: escalar pela altura só compensa (cobre a
+            # largura toda) quando o resultado já sai mais largo que 1080 —
+            # senão o vídeo é mais "vertical" que 9:16 e não sobra largura
+            # nenhuma pra acompanhar ninguém (cai pro estático de qualquer jeito).
+            scaled_w = round(orig_w * 1920 / orig_h / 2) * 2
+            if scaled_w > 1080:
+                pan_track = face_detection.track_horizontal_pan(video_path, start, end)
+                if pan_track is not None:
+                    pan_expr = _build_pan_crop_x_expr(pan_track, scaled_w)
+        except Exception:  # noqa: BLE001 — é um "extra", nunca deve derrubar o corte
+            logger.exception("Falha no rastreamento de pan (%s) — usando crop central.", video_path)
+
+        if pan_expr is not None:
+            stages.append(f"[0:v]scale={scaled_w}:1920[vscaled]")
+            stages.append(f"[vscaled]crop=1080:1920:x='{pan_expr}':y=0[vbase]")
+        else:
+            stages.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
         current = "vbase"
         if has_subtitles:
             stages.append(f"[{current}]{_subtitles_filter()}[vsub]")
