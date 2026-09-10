@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clipFileUrl, metricsUiUrl } from "../api";
 import type { ClipOut, Platform } from "../types";
-import { ClipEditorModal } from "./ClipEditorModal";
 
 const PLATFORM_LABELS: Record<Platform, string> = {
   tiktok: "TikTok",
@@ -12,15 +11,26 @@ const PLATFORM_LABELS: Record<Platform, string> = {
 
 interface Props {
   clip: ClipOut;
-  onUpdated: (clip: ClipOut) => void;
+  onEdit: (clip: ClipOut) => void;
 }
 
-export function ClipCard({ clip, onUpdated }: Props) {
+export function ClipCard({ clip, onEdit }: Props) {
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  // Muda a cada edição bem-sucedida para forçar o <video> a recarregar o
-  // arquivo (mesma URL, conteúdo novo — o navegador cacheia por padrão).
+  // Muda toda vez que o clipe volta atualizado da tela de edição (agora uma
+  // tela separada, não mais um modal aqui dentro) — força o <video> a
+  // recarregar o arquivo (mesma URL, conteúdo novo, o navegador cacheia por
+  // padrão). `clip` não tem um campo de versão/timestamp próprio, então
+  // detecta a mudança comparando a REFERÊNCIA do objeto (App.tsx sempre cria
+  // um objeto novo pro clipe editado) — pula a primeira montagem pra não
+  // recarregar o vídeo à toa assim que o card aparece.
   const [videoVersion, setVideoVersion] = useState(0);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (mountedRef.current) {
+      setVideoVersion((v) => v + 1);
+    }
+    mountedRef.current = true;
+  }, [clip]);
 
   async function copyHashtags(platform: string, tags: string[]) {
     try {
@@ -30,11 +40,6 @@ export function ClipCard({ clip, onUpdated }: Props) {
     } catch {
       // clipboard indisponível (ex: contexto não seguro) — ignora silenciosamente
     }
-  }
-
-  function handleUpdated(updated: ClipOut) {
-    onUpdated(updated);
-    setVideoVersion((v) => v + 1);
   }
 
   const hashtagEntries = Object.entries(clip.hashtags ?? {}) as [Platform, string[]][];
@@ -89,7 +94,7 @@ export function ClipCard({ clip, onUpdated }: Props) {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setEditorOpen(true)}
+          onClick={() => onEdit(clip)}
           className="flex-1 rounded-lg bg-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-100 hover:bg-slate-600"
         >
           ✂️ Editar
@@ -110,10 +115,6 @@ export function ClipCard({ clip, onUpdated }: Props) {
           Ver métricas
         </a>
       </div>
-
-      {editorOpen && (
-        <ClipEditorModal clip={clip} onClose={() => setEditorOpen(false)} onUpdated={handleUpdated} />
-      )}
     </div>
   );
 }

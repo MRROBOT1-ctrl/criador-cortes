@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listClips } from "./api";
+import { ClipEditorScreen } from "./components/ClipEditorScreen";
 import { ClipsList } from "./components/ClipsList";
 import { HomeScreen } from "./components/HomeScreen";
 import { ProgressPanel } from "./components/ProgressPanel";
@@ -8,16 +9,20 @@ import { useJobStatus } from "./hooks/useJobStatus";
 import type { ClipOut, JobSummary, UploadResponse } from "./types";
 
 // Fluxo de uma tela só: home (lista de jobs) -> upload -> progresso -> resultado.
-// Sem react-router — não há necessidade de rotas pra esses estados.
-type Stage = "home" | "upload" | "progress" | "clips";
+// "editing" é uma tela cheia separada (não mais um modal por cima de "clips")
+// — ver ClipEditorScreen.tsx. Sem react-router — não há necessidade de rotas
+// pra esses estados.
+type Stage = "home" | "upload" | "progress" | "clips" | "editing";
 
 export default function App() {
   const [stage, setStage] = useState<Stage>("home");
   const [jobId, setJobId] = useState<string | null>(null);
   const [clips, setClips] = useState<ClipOut[] | null>(null);
   const [clipsError, setClipsError] = useState<string | null>(null);
+  const [editingClipId, setEditingClipId] = useState<string | null>(null);
 
   const job = useJobStatus(stage === "progress" ? jobId : null);
+  const editingClip = clips?.find((c) => c.id === editingClipId) ?? null;
 
   useEffect(() => {
     if (job?.status === "completed" && jobId) {
@@ -30,6 +35,14 @@ export default function App() {
     }
   }, [job?.status, jobId]);
 
+  // Clipe da edição sumiu (ex: apagado em outra aba) — volta pra lista em
+  // vez de deixar a tela de edição travada sem nada pra mostrar.
+  useEffect(() => {
+    if (stage === "editing" && !editingClip) {
+      setStage("clips");
+    }
+  }, [stage, editingClip]);
+
   function handleUploaded(response: UploadResponse) {
     setJobId(response.job.id);
     setClips(null);
@@ -39,6 +52,16 @@ export default function App() {
 
   function handleClipUpdated(updated: ClipOut) {
     setClips((current) => current?.map((c) => (c.id === updated.id ? updated : c)) ?? current);
+  }
+
+  function handleEditClip(clip: ClipOut) {
+    setEditingClipId(clip.id);
+    setStage("editing");
+  }
+
+  function handleCloseEditor() {
+    setEditingClipId(null);
+    setStage("clips");
   }
 
   function handleClipsReordered(updated: ClipOut[]) {
@@ -132,10 +155,14 @@ export default function App() {
           <ClipsList
             jobId={jobId}
             clips={clips}
-            onClipUpdated={handleClipUpdated}
+            onEditClip={handleEditClip}
             onClipsReordered={handleClipsReordered}
             onReset={handleReset}
           />
+        )}
+
+        {stage === "editing" && editingClip && (
+          <ClipEditorScreen clip={editingClip} onBack={handleCloseEditor} onUpdated={handleClipUpdated} />
         )}
       </main>
     </div>

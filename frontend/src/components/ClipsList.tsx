@@ -6,12 +6,12 @@ import { JobTimeline } from "./JobTimeline";
 interface Props {
   jobId: string;
   clips: ClipOut[];
-  onClipUpdated: (clip: ClipOut) => void;
+  onEditClip: (clip: ClipOut) => void;
   onClipsReordered: (clips: ClipOut[]) => void;
   onReset: () => void;
 }
 
-export function ClipsList({ jobId, clips, onClipUpdated, onClipsReordered, onReset }: Props) {
+export function ClipsList({ jobId, clips, onEditClip, onClipsReordered, onReset }: Props) {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -44,7 +44,7 @@ export function ClipsList({ jobId, clips, onClipUpdated, onClipsReordered, onRes
           )}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {clips.map((clip) => (
-              <ClipCard key={clip.id} clip={clip} onUpdated={onClipUpdated} />
+              <ClipCard key={clip.id} clip={clip} onEdit={onEditClip} />
             ))}
           </div>
         </>

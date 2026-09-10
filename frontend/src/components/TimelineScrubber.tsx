@@ -23,7 +23,7 @@ function formatTime(seconds: number): string {
  * pointer events direto (não dois <input type="range"> sobrepostos) pra ter
  * controle total do clamp/colisão entre os handles. `windowStart`/`windowEnd`
  * definem a janela de tempo mostrada (não precisa ser o vídeo inteiro — ver
- * ClipEditorModal, que usa uma janela com folga ao redor do clipe atual).
+ * ClipEditorScreen, que usa uma janela com folga ao redor do clipe atual).
  */
 export function TimelineScrubber({ windowStart, windowEnd, start, end, onChange, onScrub, minDuration = 0.5 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
