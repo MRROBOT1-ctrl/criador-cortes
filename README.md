@@ -208,6 +208,28 @@ celery -A app.celery_app worker --loglevel=info --concurrency=1
    em cima do limite entre streamer/gameplay; um ajuste fino de posição
    específico pra esse layout é possível mas não foi feito ainda.
 
+## Funciona offline?
+
+Depende da funcionalidade:
+
+- ✅ **Upload de arquivo → transcrição → cortes → legenda/marca d'água/
+  hashtags → editor → download**: tudo local (ffmpeg, faster-whisper,
+  OpenCV), não precisa de internet — **desde que o modelo do Whisper já
+  tenha sido baixado uma vez antes** (ver abaixo).
+- ✅ Frontend: zero dependência de CDN externo (sem Google Fonts, sem
+  scripts externos) — roda 100% local.
+- ❌ **Upload por link** (`/upload-url`, yt-dlp): precisa de internet
+  sempre, é inerente à funcionalidade (baixa de uma plataforma externa).
+- ❌ **Sync de métricas via YouTube**: idem, chama a API do YouTube.
+- ⚠️ **Modelo do Whisper**: baixado da Hugging Face na primeira vez que
+  transcreve alguma coisa (~460MB pro modelo "small"). **Bug real
+  encontrado e corrigido:** esse download não ficava salvo entre rebuilds
+  da imagem Docker (nenhum volume apontava pra `~/.cache/huggingface`) —
+  todo `docker compose build` forçava baixar o modelo de novo na próxima
+  transcrição. Corrigido com um volume nomeado (`whisper_cache` no
+  `docker-compose.yml`). Validado: rebuild com `--no-cache` do worker e o
+  modelo carregou em ~2s (do cache), sem tentar baixar de novo.
+
 ## Nota sobre `/upload-url` (yt-dlp)
 
 Baixar vídeo de terceiros levanta questão de direitos autorais/ToS da
