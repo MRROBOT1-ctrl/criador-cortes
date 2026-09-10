@@ -24,7 +24,7 @@ from app.schemas import (
 )
 from app.services import hashtags
 from app.services.clip_rendering import resolve_job_render_defaults, safe_rerender
-from app.services.transcription import load_transcript_segments, segments_overlapping, write_srt
+from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
 
 router = APIRouter(tags=["clips"])
 
@@ -102,32 +102,49 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     caption_style = payload.caption_style or defaults.caption_style
     caption_font_family = payload.caption_font_family or defaults.caption_font_family
 
-    # Recalcula os segmentos de transcrição que caem no NOVO intervalo — usado
-    # tanto pra montar a legenda (se habilitada) quanto pra atualizar
-    # transcript_text/hashtags do clipe, que senão ficariam descrevendo o
-    # trecho antigo (já descartado).
-    transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
-    clip_segments = segments_overlapping(transcript_segments, start_time, end_time) if transcript_segments else []
-    clip_text = " ".join(seg.text for seg in clip_segments).strip()
-
-    # .srt recalculado com offset pro novo início do corte — só existe (e só
-    # é passado adiante) se a legenda estiver habilitada pra esse render;
-    # antes o recut sempre rodava sem legenda nenhuma por simplicidade, mas
-    # com os segmentos já recalculados aqui não custa nada religar direito.
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut.srt"
-    srt_path = None
-    if captions_enabled and clip_segments:
-        write_srt(clip_segments, tmp_srt_path, offset=start_time)
-        srt_path = tmp_srt_path
-
-    # Um pan MANUAL (ver Clip.manual_pan_keyframes) é definido em segundos
-    # relativos ao início do corte ATUAL — se o intervalo muda aqui, os
-    # keyframes antigos apontariam pro momento errado do vídeo. Mais seguro
-    # descartar e voltar pra detecção automática do que aplicar um pan
-    # deslocado silenciosamente (edição de legenda via PUT /clips/{id}/pan
-    # continua disponível pro usuário refazer depois do novo recorte).
+    # Um pan MANUAL (ver Clip.manual_pan_keyframes) e um override MANUAL de
+    # legenda (ver Clip.caption_segments_override) são definidos em segundos
+    # relativos ao início do corte ATUAL — se o intervalo muda aqui, os dois
+    # apontariam pro momento errado do vídeo/corte. Mais seguro descartar e
+    # voltar pro automático (detecção de rosto / transcrição do Whisper) do
+    # que aplicar algo deslocado silenciosamente (o usuário pode reconfigurar
+    # os dois depois do novo recorte via PUT /clips/{id}/pan e
+    # PUT /clips/{id}/captions).
     time_changed = start_time != clip.start_time or end_time != clip.end_time
     manual_pan_track = None if time_changed else clip.get_manual_pan_keyframes()
+    caption_override = None if time_changed else clip.get_caption_segments_override()
+
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut.srt"
+    srt_path = None
+
+    if caption_override is not None:
+        # Intervalo não mudou e existe uma legenda editada manualmente pra
+        # esse clipe — reaproveita o TEXTO editado (já relativo ao clipe,
+        # offset=0) em vez de recalcular a legenda pura do Whisper, senão um
+        # recut só de estilo (fonte/cor) apagaria a correção que o usuário já
+        # tinha feito.
+        override_segments = [Segment(start=s["start"], end=s["end"], text=s["text"]) for s in caption_override]
+        clip_text = " ".join(seg.text for seg in override_segments).strip()
+        if captions_enabled and override_segments:
+            write_srt(override_segments, tmp_srt_path, offset=0.0)
+            srt_path = tmp_srt_path
+    else:
+        # Recalcula os segmentos de transcrição que caem no NOVO intervalo —
+        # usado tanto pra montar a legenda (se habilitada) quanto pra
+        # atualizar transcript_text/hashtags do clipe, que senão ficariam
+        # descrevendo o trecho antigo (já descartado).
+        transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
+        clip_segments = segments_overlapping(transcript_segments, start_time, end_time) if transcript_segments else []
+        clip_text = " ".join(seg.text for seg in clip_segments).strip()
+
+        # .srt recalculado com offset pro novo início do corte — só existe (e
+        # só é passado adiante) se a legenda estiver habilitada pra esse
+        # render; antes o recut sempre rodava sem legenda nenhuma por
+        # simplicidade, mas com os segmentos já recalculados aqui não custa
+        # nada religar direito.
+        if captions_enabled and clip_segments:
+            write_srt(clip_segments, tmp_srt_path, offset=start_time)
+            srt_path = tmp_srt_path
 
     safe_rerender(
         Path(video.filepath),
@@ -153,6 +170,7 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     clip.end_time = end_time
     if time_changed:
         clip.set_manual_pan_keyframes(None)
+        clip.set_caption_segments_override(None)
     db.commit()
     db.refresh(clip)
 

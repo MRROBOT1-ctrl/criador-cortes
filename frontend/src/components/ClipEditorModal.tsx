@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { clipFileUrl, originalVideoUrl, recutClip } from "../api";
 import type { CaptionFontFamily, CaptionStyle, ClipOut } from "../types";
 import { CaptionSection } from "./CaptionSection";
+import { CaptionTextEditor } from "./CaptionTextEditor";
 import { ManualPanEditor } from "./ManualPanEditor";
 import { TimelineScrubber } from "./TimelineScrubber";
 
@@ -239,6 +240,12 @@ export function ClipEditorModal({ clip, onClose, onUpdated }: Props) {
             hasStreamerRegion={clip.has_streamer_region}
             onApplied={onUpdated}
           />
+        </section>
+
+        {/* --- Correção manual do texto da legenda (o Whisper às vezes erra uma palavra) --- */}
+        <section className="flex flex-col gap-2 rounded-lg border border-slate-800 p-3">
+          <p className="text-sm font-medium text-slate-300">Legenda</p>
+          <CaptionTextEditor clip={clip} onApplied={onUpdated} />
         </section>
 
         {error && (

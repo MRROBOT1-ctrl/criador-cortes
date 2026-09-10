@@ -138,6 +138,16 @@ class Clip(Base):
     # pra combinar pan manual com o layout de tela dividida.
     manual_pan_keyframes = Column(Text, nullable=True)
 
+    # Legenda editada manualmente pelo usuário (ver app/routers/captions.py) —
+    # JSON: [{"start": segundos_desde_o_inicio_do_clipe, "end": ..., "text": "..."}, ...].
+    # NULL = sem override, a legenda continua vindo 100% da transcrição do
+    # Whisper (data/{job_id}/transcript.json filtrada por segments_overlapping
+    # + offset, como sempre foi). Guardado com os mesmos tempos RELATIVOS AO
+    # CLIPE usados em manual_pan_keyframes (não no vídeo original) — assim um
+    # recut que muda o intervalo (ver clips.py::recut_clip) sabe que precisa
+    # invalidar isso do mesmo jeito que já invalida o pan manual.
+    caption_segments_override = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     job = relationship("Job", back_populates="clips")
@@ -152,6 +162,21 @@ class Clip(Base):
         try:
             return [(float(t), float(cx)) for t, cx in json.loads(self.manual_pan_keyframes)]
         except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    def set_caption_segments_override(self, segments: list[dict] | None) -> None:
+        # Lista vazia é tratada igual a None (remove o override) — quem chama
+        # (PUT /clips/{id}/captions) já normaliza isso, mas fica seguro aqui
+        # também caso outro código venha a usar esse setter no futuro.
+        self.caption_segments_override = json.dumps(segments) if segments else None
+
+    def get_caption_segments_override(self) -> list[dict] | None:
+        if not self.caption_segments_override:
+            return None
+        try:
+            data = json.loads(self.caption_segments_override)
+            return [{"start": float(s["start"]), "end": float(s["end"]), "text": str(s["text"])} for s in data]
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             return None
 
 

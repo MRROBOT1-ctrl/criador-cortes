@@ -116,6 +116,20 @@ export interface PanKeyframesOut {
   is_manual: boolean;
 }
 
+// Edição manual do TEXTO da legenda (ver GET/PUT /clips/{id}/captions no
+// backend) — cada linha em segundos relativos ao início do CLIPE (0 =
+// start_time do clipe), igual convenção de PanKeyframe.t.
+export interface CaptionLine {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface CaptionLinesOut {
+  lines: CaptionLine[];
+  is_manual: boolean; // false = linhas vieram da transcrição automática do Whisper (sem override salvo)
+}
+
 export interface UploadConfig {
   max_clips: number;
   clip_duration_min: number;

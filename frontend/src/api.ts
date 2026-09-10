@@ -1,6 +1,8 @@
 // Cliente HTTP simples com fetch nativo — sem axios/react-query, conforme spec.
 import type {
   CaptionFontFamily,
+  CaptionLine,
+  CaptionLinesOut,
   CaptionStyle,
   ClipOut,
   JobOut,
@@ -156,6 +158,23 @@ export async function setClipPan(clipId: string, keyframes: PanKeyframe[]): Prom
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ keyframes }),
+  });
+  return handleJson<ClipOut>(res);
+}
+
+// Legenda editável por clipe (ver app/routers/captions.py) — corrige o
+// TEXTO que o Whisper errou sem precisar reprocessar o vídeo inteiro.
+// Mandar `segments: []` remove o override e volta pra transcrição original.
+export async function getClipCaptions(clipId: string): Promise<CaptionLinesOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/captions`);
+  return handleJson<CaptionLinesOut>(res);
+}
+
+export async function setClipCaptions(clipId: string, segments: CaptionLine[]): Promise<ClipOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/captions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segments }),
   });
   return handleJson<ClipOut>(res);
 }
