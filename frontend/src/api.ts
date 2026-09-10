@@ -109,6 +109,41 @@ export function downloadAllUrl(jobId: string): string {
   return `${API_URL}/jobs/${jobId}/download`;
 }
 
+// Reordena os clipes do job (drag-and-drop na timeline) — `clipIds` precisa
+// conter TODOS os clipes do job, na nova ordem desejada (ver validação em
+// PUT /jobs/{id}/clips/order no backend).
+export async function reorderClips(jobId: string, clipIds: string[]): Promise<ClipOut[]> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/clips/order`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clip_ids: clipIds }),
+  });
+  return handleJson<ClipOut[]>(res);
+}
+
+export interface CompileResult {
+  path: string;
+  download_url: string;
+}
+
+// Gera o vídeo compilado a partir de um subconjunto (ou todos) dos clipes do
+// job, na ordem passada em `clipIds` — não precisa reprocessar nada, só
+// concatena os .mp4 já renderizados (ver POST /jobs/{id}/compile no backend).
+export async function compileClips(jobId: string, clipIds: string[]): Promise<CompileResult> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/compile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clip_ids: clipIds }),
+  });
+  return handleJson<CompileResult>(res);
+}
+
+// URL do vídeo compilado mais recente do job (GET /jobs/{id}/compiled) — 404
+// se ainda não foi gerado nenhum compilado pra esse job.
+export function compiledVideoUrl(jobId: string): string {
+  return `${API_URL}/jobs/${jobId}/compiled`;
+}
+
 // Vídeo ORIGINAL (não o clipe já cortado) — usado só pelo editor, pra dar de
 // arrastar a linha do tempo e ver o frame real de qualquer ponto do vídeo
 // (o servidor já responde a "Range", o navegador busca só o pedaço que
