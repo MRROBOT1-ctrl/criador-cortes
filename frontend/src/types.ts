@@ -116,6 +116,19 @@ export interface PanKeyframesOut {
   is_manual: boolean;
 }
 
+// Cortes internos (ver PUT /clips/{id}/cuts no backend, app/routers/clip_cuts.py)
+// — cada item é [início, fim] em segundos, relativos ao início do CLIPE
+// ATUAL (0 = clip.start_time), representando um trecho que deve ser
+// MANTIDO. O restante (fora desses pares) vira um "buraco" removido do
+// vídeo final. Par (tupla), não objeto — bate 1:1 com o formato aceito/
+// devolvido pela API e com Clip.cut_segments no backend.
+export type CutSegment = [number, number];
+
+export interface CutSegmentsOut {
+  keep_segments: CutSegment[];
+  is_active: boolean; // false = sem cortes internos (removidos ou nunca configurados)
+}
+
 export interface UploadConfig {
   max_clips: number;
   clip_duration_min: number;

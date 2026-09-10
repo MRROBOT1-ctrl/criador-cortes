@@ -23,7 +23,12 @@ from app.schemas import (
     validate_caption_style,
 )
 from app.services import hashtags
-from app.services.clip_rendering import resolve_job_render_defaults, safe_rerender
+from app.services.clip_rendering import (
+    remap_clip_segments,
+    remap_pan_track,
+    resolve_job_render_defaults,
+    safe_rerender,
+)
 from app.services.transcription import load_transcript_segments, segments_overlapping, write_srt
 
 router = APIRouter(tags=["clips"])
@@ -108,26 +113,31 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     # trecho antigo (já descartado).
     transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
     clip_segments = segments_overlapping(transcript_segments, start_time, end_time) if transcript_segments else []
-    clip_text = " ".join(seg.text for seg in clip_segments).strip()
 
-    # .srt recalculado com offset pro novo início do corte — só existe (e só
-    # é passado adiante) se a legenda estiver habilitada pra esse render;
-    # antes o recut sempre rodava sem legenda nenhuma por simplicidade, mas
-    # com os segmentos já recalculados aqui não custa nada religar direito.
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut.srt"
-    srt_path = None
-    if captions_enabled and clip_segments:
-        write_srt(clip_segments, tmp_srt_path, offset=start_time)
-        srt_path = tmp_srt_path
-
-    # Um pan MANUAL (ver Clip.manual_pan_keyframes) é definido em segundos
-    # relativos ao início do corte ATUAL — se o intervalo muda aqui, os
-    # keyframes antigos apontariam pro momento errado do vídeo. Mais seguro
-    # descartar e voltar pra detecção automática do que aplicar um pan
-    # deslocado silenciosamente (edição de legenda via PUT /clips/{id}/pan
-    # continua disponível pro usuário refazer depois do novo recorte).
+    # Um pan MANUAL (ver Clip.manual_pan_keyframes) e cortes INTERNOS (ver
+    # Clip.cut_segments/app/routers/clip_cuts.py) são definidos em segundos
+    # relativos ao início do corte ATUAL — se o intervalo muda aqui, os dois
+    # apontariam pro momento errado do vídeo. Mais seguro descartar ambos e
+    # voltar pro comportamento simples do que aplicar um deslocamento
+    # silenciosamente (o usuário pode reconfigurar os dois depois do recorte,
+    # via PUT /clips/{id}/pan e PUT /clips/{id}/cuts).
     time_changed = start_time != clip.start_time or end_time != clip.end_time
     manual_pan_track = None if time_changed else clip.get_manual_pan_keyframes()
+    cut_segments = None if time_changed else clip.get_cut_segments()
+
+    # .srt recalculado com offset pro novo início do corte (e remapeado pelos
+    # cortes internos, se ainda válidos) — só existe (e só é passado adiante)
+    # se a legenda estiver habilitada pra esse render; antes o recut sempre
+    # rodava sem legenda nenhuma por simplicidade, mas com os segmentos já
+    # recalculados aqui não custa nada religar direito.
+    srt_segments, clip_text = remap_clip_segments(clip_segments, start_time, cut_segments)
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut.srt"
+    srt_path = None
+    if captions_enabled and srt_segments:
+        write_srt(srt_segments, tmp_srt_path, offset=0.0)
+        srt_path = tmp_srt_path
+
+    render_pan_track = remap_pan_track(manual_pan_track, cut_segments)
 
     safe_rerender(
         Path(video.filepath),
@@ -144,7 +154,8 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
         caption_style=caption_style,
         caption_font_family=caption_font_family,
         streamer_region=defaults.streamer_region,
-        manual_pan_track=manual_pan_track,
+        manual_pan_track=render_pan_track,
+        keep_segments=cut_segments,
     )
 
     clip.transcript_text = clip_text
@@ -153,6 +164,7 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     clip.end_time = end_time
     if time_changed:
         clip.set_manual_pan_keyframes(None)
+        clip.set_cut_segments(None)
     db.commit()
     db.refresh(clip)
 

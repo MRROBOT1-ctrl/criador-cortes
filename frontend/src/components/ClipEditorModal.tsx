@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { clipFileUrl, originalVideoUrl, recutClip } from "../api";
 import type { CaptionFontFamily, CaptionStyle, ClipOut } from "../types";
 import { CaptionSection } from "./CaptionSection";
+import { CutSegmentsEditor } from "./CutSegmentsEditor";
 import { ManualPanEditor } from "./ManualPanEditor";
 import { TimelineScrubber } from "./TimelineScrubber";
 
@@ -239,6 +240,12 @@ export function ClipEditorModal({ clip, onClose, onUpdated }: Props) {
             hasStreamerRegion={clip.has_streamer_region}
             onApplied={onUpdated}
           />
+        </section>
+
+        {/* --- Cortes internos: remove trecho(s) do MEIO do clipe --- */}
+        <section className="flex flex-col gap-2 rounded-lg border border-slate-800 p-3">
+          <p className="text-sm font-medium text-slate-300">Remover trechos do meio do clipe</p>
+          <CutSegmentsEditor clip={clip} onApplied={onUpdated} />
         </section>
 
         {error && (
