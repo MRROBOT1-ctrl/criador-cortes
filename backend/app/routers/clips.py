@@ -5,6 +5,7 @@ sem precisar reprocessar o vídeo inteiro (transcrição, seleção de momentos
 etc. — só re-renderiza esse clipe específico com os novos parâmetros).
 """
 import json
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -116,12 +117,21 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     # do Whisper/clipe sem cortes internos) do que aplicar algo deslocado
     # silenciosamente (o usuário pode reconfigurar os três depois do novo
     # recorte via PUT /clips/{id}/pan, /captions e /cuts).
+    #
+    # Limitação aceita (sem lock nenhum): se ESSE recut e um PUT /cuts (ou
+    # /pan, /captions) do MESMO clipe rodarem ao mesmo tempo, o `clip` em
+    # memória aqui pode ficar desatualizado no meio do processamento — a
+    # troca atômica final de quem terminar por último "vence" no arquivo,
+    # mas o commit no banco de cada request só mexe nos campos que ELE
+    # pediu, podendo deixar banco e arquivo descrevendo edições diferentes.
+    # Ferramenta de um usuário só: risco baixo o bastante pra não valer um
+    # lock por clipe agora.
     time_changed = start_time != clip.start_time or end_time != clip.end_time
     manual_pan_track = None if time_changed else clip.get_manual_pan_keyframes()
     caption_override = None if time_changed else clip.get_caption_segments_override()
     cut_segments = None if time_changed else clip.get_cut_segments()
 
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut.srt"
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut_{uuid.uuid4().hex[:8]}.srt"
     srt_path = None
 
     if caption_override is not None:

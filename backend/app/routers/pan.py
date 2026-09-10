@@ -9,6 +9,7 @@ Só se aplica a vídeo SOLO (sem streamer_region/layout de tela dividida — ver
 Job.streamer_region): não há suporte ainda pra combinar pan manual com o
 layout de streamer+gameplay.
 """
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,7 +26,7 @@ from app.services.clip_rendering import (
     resolve_job_render_defaults,
     safe_rerender,
 )
-from app.services.transcription import load_transcript_segments, segments_overlapping, write_srt
+from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
 from app.config import settings
 
 router = APIRouter(tags=["pan"])
@@ -58,8 +59,15 @@ def _validate_keyframes(keyframes: list[PanKeyframe], clip_duration: float) -> N
                 detail=f"t inválido ({kf.t}) — precisa estar entre 0 e a duração do clipe ({clip_duration:.2f}s).",
             )
     times = [kf.t for kf in keyframes]
-    if times != sorted(times):
-        raise HTTPException(status_code=400, detail="Os keyframes precisam estar em ordem crescente de tempo.")
+    # Estrito (< não <=): dois keyframes com o MESMO t fariam
+    # _build_pan_crop_x_expr dividir por (t1 - t0) == 0 na expressão do
+    # ffmpeg (vira inf/nan, crop quebrado sem erro nenhum) — rejeita aqui em
+    # vez de deixar chegar lá.
+    if any(t1 <= t0 for t0, t1 in zip(times, times[1:])):
+        raise HTTPException(
+            status_code=400,
+            detail="Os keyframes precisam estar em ordem ESTRITAMENTE crescente de tempo (sem tempos repetidos).",
+        )
 
 
 @router.get("/clips/{clip_id}/pan", response_model=PanKeyframesOut)
@@ -101,18 +109,27 @@ def set_pan_keyframes(clip_id: str, payload: PanKeyframesIn, db: Session = Depen
 
     # A legenda/hashtags não mudam aqui (só o enquadramento) — reaproveita o
     # texto já transcrito pro intervalo atual do clipe pra religar a mesma
-    # legenda de sempre, sem precisar de um recut completo. Se o clipe tiver
-    # cortes internos (ver app/routers/clip_cuts.py), a legenda precisa
-    # passar pelo mesmo remapeamento de tempo de sempre — `remap_clip_segments`
-    # cuida disso (e não faz nada além do offset de sempre se não houver
-    # cortes internos).
+    # legenda de sempre, sem precisar de um recut completo. Se existir uma
+    # legenda editada manualmente (ver app/routers/captions.py), usa ELA em
+    # vez da transcrição crua do Whisper — senão ajustar só o enquadramento
+    # descartaria silenciosamente uma correção de texto já feita (mesmo
+    # cuidado que já existe em clips.py::recut_clip e clip_cuts.py). Cortes
+    # internos (ver app/routers/clip_cuts.py) passam pelo mesmo remapeamento
+    # de tempo de sempre — `remap_clip_segments` cuida disso nos dois casos.
     cut_segments = clip.get_cut_segments()
-    transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
-    clip_segments = (
-        segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
-    )
+    caption_override = clip.get_caption_segments_override()
+    if caption_override is not None:
+        clip_segments = [
+            Segment(start=s["start"] + clip.start_time, end=s["end"] + clip.start_time, text=s["text"])
+            for s in caption_override
+        ]
+    else:
+        transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
+        clip_segments = (
+            segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
+        )
     srt_segments, _ = remap_clip_segments(clip_segments, clip.start_time, cut_segments)
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_pan.srt"
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_pan_{uuid.uuid4().hex[:8]}.srt"
     srt_path = None
     if defaults.captions_enabled and srt_segments:
         write_srt(srt_segments, tmp_srt_path, offset=0.0)

@@ -13,6 +13,7 @@ valida + persiste + re-renderiza usando os helpers de
 app/services/clip_rendering.py.
 """
 import json
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -155,7 +156,7 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
         )
         srt_segments, clip_text = remap_clip_segments(clip_segments, clip.start_time, cut_segments)
 
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_captions.srt"
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_captions_{uuid.uuid4().hex[:8]}.srt"
     srt_path = None
     if defaults.captions_enabled and srt_segments:
         write_srt(srt_segments, tmp_srt_path, offset=0.0)

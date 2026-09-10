@@ -8,6 +8,7 @@ são concatenados sem ele (ver app/services/video_cutter.py,
 `cut_and_render_vertical`/`keep_segments`/`remap_time_through_cuts`).
 """
 import json
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -137,7 +138,10 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
         )
     srt_segments, clip_text = remap_clip_segments(clip_segments, clip.start_time, normalized)
 
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_cuts.srt"
+    # Token aleatório no nome: duas edições concorrentes desse mesmo clipe
+    # (ex: PUT /cuts e PUT /captions ao mesmo tempo) não podem disputar o
+    # MESMO arquivo .srt enquanto cada ffmpeg ainda está lendo o seu.
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_cuts_{uuid.uuid4().hex[:8]}.srt"
     srt_path = None
     if defaults.captions_enabled and srt_segments:
         write_srt(srt_segments, tmp_srt_path, offset=0.0)

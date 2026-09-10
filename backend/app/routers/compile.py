@@ -56,7 +56,16 @@ def _needs_rebuild(compiled_path: Path, manifest_path: Path, clip_ids: list[str]
     que gerou o arquivo atual, ou se algum clipe envolvido for mais novo que
     ele (ex: usuário reeditou/recortou um clipe depois de já ter compilado) —
     mesmo padrão do zip em download.py::download_all, adaptado porque aqui
-    também importa QUAL subconjunto/ordem foi usado, não só "algo mudou"."""
+    também importa QUAL subconjunto/ordem foi usado, não só "algo mudou".
+
+    Limitação aceita (sem lock nenhum): se um clipe for re-renderizado
+    (recut/pan/captions/cuts) EXATAMENTE durante uma compilação em
+    andamento, é possível o concat ler o arquivo antigo mas o replace
+    atômico da edição terminar ANTES do replace do compilado — nesse caso
+    o compilado sai mais novo que o clipe editado mesmo embutindo o
+    conteúdo velho, e essa checagem não pega isso da próxima vez. Ferramenta
+    de um usuário só rodando localmente: risco baixo o bastante pra não
+    valer a complexidade de um lock por job/clipe agora."""
     if not compiled_path.exists() or not manifest_path.exists():
         return True
     try:

@@ -326,6 +326,15 @@ def _build_pan_crop_x_expr(samples: list[tuple[float, float]], scaled_w: int, cr
         t0, x0 = points[i]
         t1, x1 = points[i + 1]
         expr = f"if(lt(t,{t1:.3f}),{x0:.1f}+({x1:.1f}-{x0:.1f})*(t-{t0:.3f})/{(t1 - t0):.6f},{expr})"
+    # A recursão acima só cobre t >= points[0][0] (interpola pro próximo
+    # ponto, ou segue caindo pro nível seguinte) — pra t ANTES do primeiro
+    # ponto, sem esse guard ela extrapolaria pra trás usando a inclinação
+    # entre os dois primeiros pontos em vez de segurar no valor do primeiro
+    # (só importa quando o primeiro keyframe não está em t=0 — o rastro
+    # automático sempre começa em 0, mas um pan MANUAL pode começar depois).
+    first_t, first_x = points[0]
+    if first_t > 0:
+        expr = f"if(lt(t,{first_t:.3f}),{first_x:.1f},{expr})"
     return expr
 
 
@@ -554,7 +563,17 @@ def cut_and_render_vertical(
                     # pan manual (já remapeado) pra usar no lugar, mais seguro
                     # cair pro crop central estático do que aplicar um pan
                     # deslocado. Limitação conhecida: auto-pan não funciona
-                    # junto com cortes internos, só o manual.
+                    # junto com cortes internos, só o manual. Logado (não só
+                    # comentado) porque isso pode acionar o vídeo relaxante de
+                    # fundo como efeito colateral de simplesmente adicionar um
+                    # corte interno num clipe que antes tinha rosto rastreável
+                    # — sem esse log, pareceria que o vídeo relaxante "ligou
+                    # sozinho" sem motivo aparente.
+                    logger.info(
+                        "Cortes internos ativos sem pan manual (%s) — pulando detecção automática "
+                        "(amostraria o trecho com os buracos ainda presentes).",
+                        video_path,
+                    )
                     pan_track = None
                 if pan_track:
                     pan_expr = _build_pan_crop_x_expr(pan_track, scaled_w)

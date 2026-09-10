@@ -4,6 +4,7 @@ clipe já existente (recut de tempo, edição de legenda, pan manual, etc.) —
 extraído de app/routers/clips.py pra evitar duplicar a mesma lógica de
 "resolve os defaults do job" e "renderiza com segurança" em cada endpoint novo.
 """
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,7 +91,15 @@ def remap_clip_segments(
     remapped: list[Segment] = []
     texts: list[str] = []
     for seg in clip_segments:
-        result = video_cutter.remap_range_through_cuts(seg.start - clip_start, seg.end - clip_start, keep_segments)
+        # Clamp igual ao branch sem cortes internos acima — um segmento pode
+        # legitimamente começar um pouco ANTES de clip_start (segments_overlapping
+        # aceita >=50% de sobreposição, não exige o segmento inteiro dentro do
+        # intervalo). Sem isso, `seg.start - clip_start` fica negativo e
+        # remap_time_through_cuts trata como "antes do primeiro segmento
+        # mantido" — descartando a linha à toa mesmo quando ela sobrevive.
+        local_start = max(0.0, seg.start - clip_start)
+        local_end = max(0.0, seg.end - clip_start)
+        result = video_cutter.remap_range_through_cuts(local_start, local_end, keep_segments)
         if result is None:
             continue  # linha caiu inteira (ou quase) num trecho removido — ver remap_range_through_cuts
         new_start, new_end = result
@@ -138,8 +147,15 @@ def safe_rerender(
     processo morto) não deve sobrescrever o clipe anterior (que funcionava)
     com um arquivo truncado/corrompido. `cleanup_srt=True` apaga o .srt
     temporário depois (usado quando o chamador gerou um só pra essa
-    renderização, não um arquivo persistente)."""
-    tmp_path = output_path.with_suffix(".recut_tmp.mp4")
+    renderização, não um arquivo persistente).
+
+    O nome do tmp inclui um token aleatório — não é uma trava de verdade
+    contra duas edições concorrentes no MESMO clipe (ex: PUT /pan e PUT
+    /captions ao mesmo tempo ainda podem fazer uma sobrescrever o resultado
+    da outra na troca atômica final), mas evita o caso mais bobo de dois
+    renders concorrentes lerem/escreverem o MESMO arquivo temporário
+    enquanto ainda estão rodando."""
+    tmp_path = output_path.with_suffix(f".{uuid.uuid4().hex[:8]}.recut_tmp.mp4")
     try:
         video_cutter.cut_and_render_vertical(
             video_path, start, end, tmp_path, srt_path=srt_path, **cutter_kwargs,
