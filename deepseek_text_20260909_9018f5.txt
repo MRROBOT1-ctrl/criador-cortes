@@ -1,0 +1,1 @@
+@claude-code Vamos construir o VideoCutterAI. Quero começar pela estrutura de pastas, docker-compose.yml e os modelos de banco de dados. Mostra o código completo.

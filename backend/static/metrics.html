@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VideoCutterAI — Métricas</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; min-height: 100vh;
+    background: #111318; color: #e8e8ec;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .sub { color: #9aa0ab; margin: 0 0 24px; font-size: 0.9rem; }
+  .panel {
+    background: #1a1d24; border: 1px solid #2a2e38; border-radius: 12px;
+    padding: 20px; max-width: 900px; margin: 0 auto 20px;
+  }
+  label { display: block; font-size: 0.85rem; color: #9aa0ab; margin-bottom: 6px; }
+  input, select, button {
+    background: #22262f; border: 1px solid #343945; color: #e8e8ec;
+    border-radius: 8px; padding: 9px 12px; font-size: 0.9rem;
+  }
+  input, select { width: 100%; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .row > div { flex: 1; min-width: 160px; }
+  button {
+    cursor: pointer; background: #3d6bff; border: none; font-weight: 600;
+  }
+  button:hover { background: #5a80ff; }
+  button.secondary { background: #22262f; border: 1px solid #343945; }
+  button.secondary:hover { background: #2a2e38; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  #status { font-size: 0.85rem; margin-top: 10px; min-height: 1.2em; }
+  #status.error { color: #ff6b6b; }
+  #status.ok { color: #4ade80; }
+  canvas { max-width: 100%; }
+  .stats { display: flex; gap: 20px; margin: 16px 0; flex-wrap: wrap; }
+  .stat { flex: 1; min-width: 100px; background: #22262f; border-radius: 10px; padding: 12px 16px; }
+  .stat .n { font-size: 1.4rem; font-weight: 700; }
+  .stat .l { font-size: 0.75rem; color: #9aa0ab; }
+</style>
+</head>
+<body>
+  <h1>📊 Métricas de engajamento</h1>
+  <p class="sub">Acompanhe views, curtidas e comentários de cada corte publicado.</p>
+
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label for="clipId">ID do clipe</label>
+        <input id="clipId" placeholder="cole o id do clip (ClipOut.id)">
+      </div>
+      <div style="flex: 0; align-self: flex-end;">
+        <button onclick="loadMetrics()">Carregar</button>
+      </div>
+    </div>
+
+    <div class="stats" id="stats" hidden>
+      <div class="stat"><div class="n" id="statViews">0</div><div class="l">views (última leitura)</div></div>
+      <div class="stat"><div class="n" id="statLikes">0</div><div class="l">curtidas</div></div>
+      <div class="stat"><div class="n" id="statComments">0</div><div class="l">comentários</div></div>
+    </div>
+
+    <canvas id="chart" height="110"></canvas>
+    <div id="status"></div>
+  </div>
+
+  <div class="panel">
+    <h2 style="font-size:1rem;margin-top:0;">Lançar métrica manual</h2>
+    <div class="row">
+      <div>
+        <label for="platform">Plataforma</label>
+        <select id="platform">
+          <option value="tiktok">TikTok</option>
+          <option value="instagram_reels">Instagram Reels</option>
+          <option value="youtube_shorts">YouTube Shorts</option>
+          <option value="facebook_reels">Facebook Reels</option>
+        </select>
+      </div>
+      <div><label for="views">Views</label><input id="views" type="number" min="0" value="0"></div>
+      <div><label for="likes">Curtidas</label><input id="likes" type="number" min="0" value="0"></div>
+      <div><label for="comments">Comentários</label><input id="comments" type="number" min="0" value="0"></div>
+      <div><label for="shares">Compart.</label><input id="shares" type="number" min="0" value="0"></div>
+    </div>
+    <div class="actions">
+      <button onclick="submitManual()">Salvar lançamento manual</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="font-size:1rem;margin-top:0;">Sync automático — YouTube</h2>
+    <p class="sub" style="margin-bottom:12px;">Requer <code>YOUTUBE_API_KEY</code> configurada no backend (.env).</p>
+    <div class="row">
+      <div>
+        <label for="ytId">ID do vídeo no YouTube</label>
+        <input id="ytId" placeholder="ex: dQw4w9WgXcQ (da URL do vídeo)">
+      </div>
+      <div style="flex: 0; align-self: flex-end;">
+        <button class="secondary" onclick="syncYoutube()">Sincronizar agora</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+let chart = null;
+
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = type || '';
+}
+
+function currentClipId() {
+  const id = document.getElementById('clipId').value.trim();
+  if (!id) { setStatus('Informe o ID do clipe primeiro.', 'error'); }
+  return id;
+}
+
+async function loadMetrics() {
+  const clipId = currentClipId();
+  if (!clipId) return;
+  setStatus('Carregando...');
+  try {
+    const res = await fetch(`/clips/${clipId}/metrics`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const metrics = await res.json();
+    renderChart(metrics);
+    renderStats(metrics);
+    setStatus(`${metrics.length} lançamento(s) carregado(s).`, 'ok');
+  } catch (err) {
+    setStatus('Erro: ' + err.message, 'error');
+  }
+}
+
+function renderStats(metrics) {
+  const box = document.getElementById('stats');
+  if (!metrics.length) { box.hidden = true; return; }
+  const last = metrics[metrics.length - 1];
+  document.getElementById('statViews').textContent = last.views.toLocaleString('pt-BR');
+  document.getElementById('statLikes').textContent = last.likes.toLocaleString('pt-BR');
+  document.getElementById('statComments').textContent = last.comments.toLocaleString('pt-BR');
+  box.hidden = false;
+}
+
+function renderChart(metrics) {
+  const labels = metrics.map(m => new Date(m.recorded_at).toLocaleString('pt-BR'));
+  const dataset = (field, color) => ({
+    label: field[0].toUpperCase() + field.slice(1),
+    data: metrics.map(m => m[field]),
+    borderColor: color,
+    backgroundColor: color + '33',
+    tension: 0.3,
+  });
+
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        dataset('views', '#3d6bff'),
+        dataset('likes', '#4ade80'),
+        dataset('comments', '#f59e0b'),
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#e8e8ec' } } },
+      scales: {
+        x: { ticks: { color: '#9aa0ab' }, grid: { color: '#2a2e38' } },
+        y: { ticks: { color: '#9aa0ab' }, grid: { color: '#2a2e38' }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+async function submitManual() {
+  const clipId = currentClipId();
+  if (!clipId) return;
+  const payload = {
+    platform: document.getElementById('platform').value,
+    views: Number(document.getElementById('views').value) || 0,
+    likes: Number(document.getElementById('likes').value) || 0,
+    comments: Number(document.getElementById('comments').value) || 0,
+    shares: Number(document.getElementById('shares').value) || 0,
+  };
+  setStatus('Salvando...');
+  try {
+    const res = await fetch(`/clips/${clipId}/metrics`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    setStatus('Lançamento salvo.', 'ok');
+    loadMetrics();
+  } catch (err) {
+    setStatus('Erro: ' + err.message, 'error');
+  }
+}
+
+async function syncYoutube() {
+  const clipId = currentClipId();
+  if (!clipId) return;
+  const youtube_video_id = document.getElementById('ytId').value.trim();
+  if (!youtube_video_id) { setStatus('Informe o ID do vídeo no YouTube.', 'error'); return; }
+  setStatus('Sincronizando com o YouTube...');
+  try {
+    const res = await fetch(`/clips/${clipId}/metrics/youtube-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ youtube_video_id }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    setStatus('Sincronizado com sucesso.', 'ok');
+    loadMetrics();
+  } catch (err) {
+    setStatus('Erro: ' + err.message, 'error');
+  }
+}
+</script>
+</body>
+</html>

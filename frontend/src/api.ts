@@ -1,0 +1,150 @@
+// Cliente HTTP simples com fetch nativo — sem axios/react-query, conforme spec.
+import type { CaptionFontFamily, CaptionStyle, ClipOut, JobOut, JobSummary, UploadConfig, UploadResponse } from "./types";
+
+export interface WatermarkStatus {
+  exists: boolean;
+}
+
+export const API_URL: string = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+// ws:// ou wss:// a partir de API_URL, preservando host/porta.
+export function wsUrl(path: string): string {
+  const base = new URL(API_URL);
+  const protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${base.host}${path}`;
+}
+
+async function handleJson<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body?.detail ?? detail;
+    } catch {
+      // resposta sem corpo JSON (ex: erro de rede) — mantém statusText
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return (await res.json()) as T;
+}
+
+export async function uploadVideo(file: File, config: UploadConfig): Promise<UploadResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("max_clips", String(config.max_clips));
+  form.append("clip_duration_min", String(config.clip_duration_min));
+  form.append("clip_duration_max", String(config.clip_duration_max));
+  form.append("keywords", config.keywords);
+  if (config.language.trim()) {
+    form.append("language", config.language.trim());
+  }
+  form.append("watermark_enabled", String(config.watermark_enabled));
+  form.append("watermark_position", config.watermark_position);
+  form.append("captions_enabled", String(config.captions_enabled));
+  form.append("caption_font_size", String(config.caption_font_size));
+  form.append("caption_color", config.caption_color);
+  form.append("caption_style", config.caption_style);
+  form.append("caption_font_family", config.caption_font_family);
+
+  const res = await fetch(`${API_URL}/upload`, { method: "POST", body: form });
+  return handleJson<UploadResponse>(res);
+}
+
+// Alternativa ao upload de arquivo: link do YouTube/TikTok/Instagram etc.,
+// baixado via yt-dlp dentro do worker (ver POST /upload-url no backend).
+export async function uploadVideoUrl(url: string, config: UploadConfig): Promise<UploadResponse> {
+  const res = await fetch(`${API_URL}/upload-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url,
+      max_clips: config.max_clips,
+      clip_duration_min: config.clip_duration_min,
+      clip_duration_max: config.clip_duration_max,
+      keywords: config.keywords,
+      language: config.language.trim() || null,
+      watermark_enabled: config.watermark_enabled,
+      watermark_position: config.watermark_position,
+      captions_enabled: config.captions_enabled,
+      caption_font_size: config.caption_font_size,
+      caption_color: config.caption_color,
+      caption_style: config.caption_style,
+      caption_font_family: config.caption_font_family,
+    }),
+  });
+  return handleJson<UploadResponse>(res);
+}
+
+export async function getJobStatus(jobId: string): Promise<JobOut> {
+  const res = await fetch(`${API_URL}/status/${jobId}`);
+  return handleJson<JobOut>(res);
+}
+
+// Lista todos os jobs (mais recente primeiro) pra tela "Meus cortes".
+export async function listJobs(): Promise<JobSummary[]> {
+  const res = await fetch(`${API_URL}/jobs`);
+  return handleJson<JobSummary[]>(res);
+}
+
+export async function listClips(jobId: string): Promise<ClipOut[]> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/clips`);
+  return handleJson<ClipOut[]>(res);
+}
+
+export function clipFileUrl(clipId: string): string {
+  return `${API_URL}/clips/${clipId}/file`;
+}
+
+export function downloadAllUrl(jobId: string): string {
+  return `${API_URL}/jobs/${jobId}/download`;
+}
+
+export function metricsUiUrl(clipId: string): string {
+  return `${API_URL}/ui/metrics.html?clip_id=${clipId}`;
+}
+
+export interface ClipEditOptions {
+  start_time?: number;
+  end_time?: number;
+  captions_enabled?: boolean;
+  caption_font_size?: number;
+  caption_color?: string;
+  caption_style?: CaptionStyle;
+  caption_font_family?: CaptionFontFamily;
+}
+
+// Edita um clipe já gerado — tempo do corte e/ou estilo da legenda. Todo
+// campo é opcional: omitido mantém o que o clipe/job já tinha (ver
+// RecutRequest no backend, app/routers/clips.py).
+export async function recutClip(clipId: string, options: ClipEditOptions): Promise<ClipOut> {
+  const res = await fetch(`${API_URL}/clips/${clipId}/recut`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  });
+  return handleJson<ClipOut>(res);
+}
+
+// Marca d'água/logo — uma imagem só, global (ver app/routers/watermark.py).
+export async function getWatermarkStatus(): Promise<WatermarkStatus> {
+  const res = await fetch(`${API_URL}/watermark`);
+  return handleJson<WatermarkStatus>(res);
+}
+
+export async function uploadWatermark(file: File): Promise<WatermarkStatus> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_URL}/watermark`, { method: "POST", body: form });
+  return handleJson<WatermarkStatus>(res);
+}
+
+export async function deleteWatermark(): Promise<WatermarkStatus> {
+  const res = await fetch(`${API_URL}/watermark`, { method: "DELETE" });
+  return handleJson<WatermarkStatus>(res);
+}
+
+export function watermarkPreviewUrl(): string {
+  // cache-bust simples: sem isso o <img> não atualiza ao trocar de logo,
+  // já que a URL do arquivo não muda de nome.
+  return `${API_URL}/watermark/file?t=${Date.now()}`;
+}

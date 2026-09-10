@@ -1,0 +1,131 @@
+import { useEffect, useState } from "react";
+import { listClips } from "./api";
+import { ClipsList } from "./components/ClipsList";
+import { HomeScreen } from "./components/HomeScreen";
+import { ProgressPanel } from "./components/ProgressPanel";
+import { UploadForm } from "./components/UploadForm";
+import { useJobStatus } from "./hooks/useJobStatus";
+import type { ClipOut, JobSummary, UploadResponse } from "./types";
+
+// Fluxo de uma tela só: home (lista de jobs) -> upload -> progresso -> resultado.
+// Sem react-router — não há necessidade de rotas pra esses estados.
+type Stage = "home" | "upload" | "progress" | "clips";
+
+export default function App() {
+  const [stage, setStage] = useState<Stage>("home");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [clips, setClips] = useState<ClipOut[] | null>(null);
+  const [clipsError, setClipsError] = useState<string | null>(null);
+
+  const job = useJobStatus(stage === "progress" ? jobId : null);
+
+  useEffect(() => {
+    if (job?.status === "completed" && jobId) {
+      listClips(jobId)
+        .then((data) => {
+          setClips(data);
+          setStage("clips");
+        })
+        .catch((err) => setClipsError(err instanceof Error ? err.message : "Falha ao carregar os clipes."));
+    }
+  }, [job?.status, jobId]);
+
+  function handleUploaded(response: UploadResponse) {
+    setJobId(response.job.id);
+    setClips(null);
+    setClipsError(null);
+    setStage("progress");
+  }
+
+  function handleClipUpdated(updated: ClipOut) {
+    setClips((current) => current?.map((c) => (c.id === updated.id ? updated : c)) ?? current);
+  }
+
+  function handleReset() {
+    setJobId(null);
+    setClips(null);
+    setClipsError(null);
+    setStage("upload");
+  }
+
+  function handleGoHome() {
+    setJobId(null);
+    setClips(null);
+    setClipsError(null);
+    setStage("home");
+  }
+
+  function handleSelectJob(selected: JobSummary) {
+    setJobId(selected.id);
+    setClipsError(null);
+    if (selected.status === "completed") {
+      // Já concluído: pula direto pra tela de clipes em vez de passar pelo
+      // progresso (que não faria sentido mostrar de novo pra um job pronto).
+      listClips(selected.id)
+        .then((data) => {
+          setClips(data);
+          setStage("clips");
+        })
+        .catch((err) => setClipsError(err instanceof Error ? err.message : "Falha ao carregar os clipes."));
+    } else {
+      // pending | running | failed -> ProgressPanel já trata os 3 casos
+      // (barra de progresso, ou erro + botão de voltar quando failed).
+      setClips(null);
+      setStage("progress");
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 px-4 py-10">
+      <header className="mx-auto mb-8 max-w-6xl">
+        {stage !== "home" && (
+          <button
+            type="button"
+            onClick={handleGoHome}
+            className="mb-3 text-sm font-medium text-indigo-400 hover:text-indigo-300"
+          >
+            ← Meus cortes
+          </button>
+        )}
+        <h1 className="text-2xl font-bold text-slate-100">VideoCutterAI</h1>
+        <p className="mt-1 text-sm text-slate-400">
+          Gere cortes verticais automáticos com legenda e hashtags a partir de um vídeo longo.
+        </p>
+      </header>
+
+      <main>
+        {stage === "home" && <HomeScreen onNewClip={() => setStage("upload")} onSelectJob={handleSelectJob} />}
+
+        {stage === "upload" && <UploadForm onUploaded={handleUploaded} />}
+
+        {stage === "progress" && (
+          <div className="flex flex-col items-center gap-6">
+            {job ? (
+              <ProgressPanel job={job} />
+            ) : (
+              <p className="text-sm text-slate-400">Conectando ao status do job...</p>
+            )}
+            {job?.status === "failed" && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700"
+              >
+                Tentar com outro vídeo
+              </button>
+            )}
+            {clipsError && (
+              <div className="w-full max-w-xl rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
+                {clipsError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {stage === "clips" && jobId && clips && (
+          <ClipsList jobId={jobId} clips={clips} onClipUpdated={handleClipUpdated} onReset={handleReset} />
+        )}
+      </main>
+    </div>
+  );
+}

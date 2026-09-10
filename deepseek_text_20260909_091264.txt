@@ -1,0 +1,1 @@
+@claude-code Agora vamos implementar o endpoint de upload e o worker inicial com Celery.

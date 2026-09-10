@@ -1,0 +1,29 @@
+# Dados de execução — vídeos enviados/baixados, clipes gerados, transcrições
+# e o banco SQLite. São artefatos de uso (do usuário), não código-fonte, e
+# uploads/ sozinho já passa de alguns GB — não faz sentido versionar.
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/outputs/*
+!backend/outputs/.gitkeep
+backend/data/*
+!backend/data/.gitkeep
+
+# Segredos/config local (YOUTUBE_API_KEY etc.) — .env.example fica versionado.
+.env
+
+# Python
+__pycache__/
+*.pyc
+backend/venv/
+
+# Node/frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Editor/SO
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store

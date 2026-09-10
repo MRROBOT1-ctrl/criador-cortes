@@ -1,0 +1,31 @@
+# === API ===
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+websockets==13.1
+
+# === Banco de dados ===
+sqlalchemy==2.0.34
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# === Fila de processamento ===
+celery[redis]==5.4.0
+redis==5.0.8
+
+# === Transcrição (Whisper otimizado para CPU) ===
+faster-whisper==1.0.3
+requests==2.32.3  # dependência interna do faster-whisper (download do modelo) — não vem pinada por ele
+
+# === Áudio/Vídeo ===
+pydub==0.25.1
+numpy==1.26.4
+opencv-python-headless==4.10.0.84  # detecção de rosto (janela do streamer) — build "headless" evita libs de GUI desnecessárias no container
+# yt-dlp fica de propósito sem versão travada: YouTube/TikTok/Instagram mudam
+# a API/HTML deles com frequência e uma versão antiga quebra rápido — os
+# mantenedores lançam patches de compatibilidade toda semana.
+yt-dlp
+
+# === Utilitários ===
+python-dotenv==1.0.1
+httpx==0.27.2

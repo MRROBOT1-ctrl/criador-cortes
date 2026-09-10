@@ -1,0 +1,2 @@
+
+**Agora, Claude Code, me ajuda a construir esse sistema do zero, começando pelo backend e estrutura inicial. Vamos dar prioridade a código funcional e bem testado.**
