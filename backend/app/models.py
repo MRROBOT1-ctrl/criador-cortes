@@ -90,11 +90,30 @@ class Job(Base):
     # vez de reverter silenciosamente pro crop central.
     streamer_region = Column(String, nullable=True)
 
+    # Vídeo "relaxante" de fundo (ver RelaxingVideo abaixo e
+    # app/routers/relaxing_videos.py) — usado como fallback quando o vídeo é
+    # só narração (sem streamer_region E sem rosto rastreável). Escolhido UMA
+    # vez pra todo o job (mesmo espírito de streamer_region: persistido pra
+    # que um recut reaproveite o mesmo, em vez de sortear de novo a cada
+    # edição) — sem FK de verdade (mesmo estilo solto de streamer_region),
+    # resolvido manualmente contra a tabela relaxing_videos, tolerando um id
+    # apontando pra um vídeo já apagado (mesma robustez de find_watermark_file).
+    # `use_relaxing_video_fallback=False` desliga esse comportamento pro job
+    # inteiro ("sem janela" — sempre cai pro crop central simples de sempre).
+    # FK sem enforcement de verdade (SQLite aqui roda sem PRAGMA foreign_keys=ON,
+    # ver app/database.py) — só pra ganhar a relationship de conveniência,
+    # apagar um RelaxingVideo referenciado não quebra nada, só deixa o id
+    # solto (relationship resolve pra None nesse caso, tratado em
+    # resolve_job_render_defaults igual find_watermark_file já fazia).
+    use_relaxing_video_fallback = Column(Boolean, default=True)
+    relaxing_video_id = Column(String, ForeignKey("relaxing_videos.id"), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     video = relationship("Video", back_populates="jobs")
     clips = relationship("Clip", back_populates="job", cascade="all, delete-orphan")
+    relaxing_video = relationship("RelaxingVideo")
 
     def add_log(self, message: str) -> None:
         ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -219,3 +238,20 @@ class Metric(Base):
     recorded_at = Column(DateTime, default=datetime.utcnow)
 
     clip = relationship("Clip", back_populates="metrics")
+
+
+class RelaxingVideo(Base):
+    """Biblioteca de vídeos 'relaxantes' (parkour/slime/satisfying etc.) —
+    usados como fundo em vídeos de narração pura (ver Job.relaxing_video_id
+    e app/services/video_cutter.py, `relaxing_video_path`). Baixados via
+    yt-dlp a partir de um link (ver app/routers/relaxing_videos.py), mesmo
+    mecanismo já usado pro upload por link do vídeo principal."""
+
+    __tablename__ = "relaxing_videos"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    filepath = Column(String, nullable=False)
+    title = Column(String, nullable=True)
+    duration = Column(Float, nullable=True)  # segundos
+    source_url = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

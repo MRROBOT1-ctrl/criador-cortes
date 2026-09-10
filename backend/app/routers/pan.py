@@ -141,6 +141,7 @@ def set_pan_keyframes(clip_id: str, payload: PanKeyframesIn, db: Session = Depen
         streamer_region=None,
         manual_pan_track=render_pan_track,
         keep_segments=cut_segments,
+        relaxing_video_path=defaults.relaxing_video_path,
     )
 
     db.commit()

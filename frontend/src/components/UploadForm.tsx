@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { uploadVideo, uploadVideoUrl } from "../api";
 import type { CaptionFontFamily, CaptionStyle, UploadConfig, UploadResponse, WatermarkPosition } from "../types";
 import { CaptionSection } from "./CaptionSection";
+import { RelaxingVideoSection } from "./RelaxingVideoSection";
 import { WatermarkSection } from "./WatermarkSection";
 
 const ACCEPTED_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv"];
@@ -29,6 +30,7 @@ export function UploadForm({ onUploaded }: Props) {
   const [captionColor, setCaptionColor] = useState("#FFFFFF");
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("bold_outline");
   const [captionFontFamily, setCaptionFontFamily] = useState<CaptionFontFamily>("DejaVu Sans");
+  const [useRelaxingVideoFallback, setUseRelaxingVideoFallback] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +56,7 @@ export function UploadForm({ onUploaded }: Props) {
       caption_color: captionColor,
       caption_style: captionStyle,
       caption_font_family: captionFontFamily,
+      use_relaxing_video_fallback: useRelaxingVideoFallback,
     };
 
     setSubmitting(true);
@@ -245,6 +248,8 @@ export function UploadForm({ onUploaded }: Props) {
         onEnabledChange={setWatermarkEnabled}
         onPositionChange={setWatermarkPosition}
       />
+
+      <RelaxingVideoSection enabled={useRelaxingVideoFallback} onEnabledChange={setUseRelaxingVideoFallback} />
 
       {error && (
         <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">

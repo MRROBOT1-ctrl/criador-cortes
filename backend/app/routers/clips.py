@@ -174,6 +174,7 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
         streamer_region=defaults.streamer_region,
         manual_pan_track=render_pan_track,
         keep_segments=cut_segments,
+        relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.transcript_text = clip_text

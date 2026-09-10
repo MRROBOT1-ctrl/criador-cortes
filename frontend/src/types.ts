@@ -156,4 +156,15 @@ export interface UploadConfig {
   caption_color: string;
   caption_style: CaptionStyle;
   caption_font_family: CaptionFontFamily;
+  use_relaxing_video_fallback: boolean;
+}
+
+// Biblioteca de vídeos "relaxantes" de fundo (ver GET/POST/DELETE
+// /relaxing-videos no backend) — usados como fallback em vídeos de
+// narração pura (sem streamer, sem rosto rastreável).
+export interface RelaxingVideoOut {
+  id: string;
+  title: string | null;
+  duration: number | null;
+  source_url: string | null;
 }

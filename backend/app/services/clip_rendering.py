@@ -27,10 +27,22 @@ class JobRenderDefaults:
     caption_style: str
     caption_font_family: str
     streamer_region: tuple[int, int, int, int] | None
+    relaxing_video_path: Path | None
 
 
 def resolve_job_render_defaults(job: Job | None) -> JobRenderDefaults:
     watermark_path = find_watermark_file() if (job is not None and job.watermark_enabled) else None
+
+    # Mesma robustez de find_watermark_file: o vídeo relaxante escolhido pro
+    # job pode ter sido apagado da biblioteca depois (ver
+    # app/routers/relaxing_videos.py) — trata como "sem vídeo relaxante" em
+    # vez de quebrar o render.
+    relaxing_video_path = None
+    if job is not None and job.relaxing_video is not None and job.relaxing_video.filepath:
+        candidate = Path(job.relaxing_video.filepath)
+        if candidate.exists():
+            relaxing_video_path = candidate
+
     return JobRenderDefaults(
         watermark_path=watermark_path,
         watermark_position=(job.watermark_position if job else None) or "bottom-right",
@@ -40,6 +52,7 @@ def resolve_job_render_defaults(job: Job | None) -> JobRenderDefaults:
         caption_style=(job.caption_style if job else None) or "bold_outline",
         caption_font_family=(job.caption_font_family if job else None) or "DejaVu Sans",
         streamer_region=job.get_streamer_region() if job is not None else None,
+        relaxing_video_path=relaxing_video_path,
     )
 
 

@@ -11,6 +11,7 @@ import type {
   JobSummary,
   PanKeyframe,
   PanKeyframesOut,
+  RelaxingVideoOut,
   UploadConfig,
   UploadResponse,
 } from "./types";
@@ -59,6 +60,7 @@ export async function uploadVideo(file: File, config: UploadConfig): Promise<Upl
   form.append("caption_color", config.caption_color);
   form.append("caption_style", config.caption_style);
   form.append("caption_font_family", config.caption_font_family);
+  form.append("use_relaxing_video_fallback", String(config.use_relaxing_video_fallback));
 
   const res = await fetch(`${API_URL}/upload`, { method: "POST", body: form });
   return handleJson<UploadResponse>(res);
@@ -84,6 +86,7 @@ export async function uploadVideoUrl(url: string, config: UploadConfig): Promise
       caption_color: config.caption_color,
       caption_style: config.caption_style,
       caption_font_family: config.caption_font_family,
+      use_relaxing_video_fallback: config.use_relaxing_video_fallback,
     }),
   });
   return handleJson<UploadResponse>(res);
@@ -255,4 +258,24 @@ export function watermarkPreviewUrl(): string {
   // cache-bust simples: sem isso o <img> não atualiza ao trocar de logo,
   // já que a URL do arquivo não muda de nome.
   return `${API_URL}/watermark/file?t=${Date.now()}`;
+}
+
+// Biblioteca de vídeos "relaxantes" de fundo (ver app/routers/relaxing_videos.py).
+export async function listRelaxingVideos(): Promise<RelaxingVideoOut[]> {
+  const res = await fetch(`${API_URL}/relaxing-videos`);
+  return handleJson<RelaxingVideoOut[]>(res);
+}
+
+export async function addRelaxingVideo(url: string): Promise<RelaxingVideoOut> {
+  const res = await fetch(`${API_URL}/relaxing-videos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  return handleJson<RelaxingVideoOut>(res);
+}
+
+export async function deleteRelaxingVideo(id: string): Promise<void> {
+  const res = await fetch(`${API_URL}/relaxing-videos/${id}`, { method: "DELETE" });
+  await handleJson<{ deleted: string }>(res);
 }

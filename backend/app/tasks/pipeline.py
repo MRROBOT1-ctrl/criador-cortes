@@ -11,13 +11,14 @@ arquivo — nesse caso video.filepath ainda está vazio quando a task começa.
 """
 import json
 import logging
+import random
 import traceback
 from pathlib import Path
 
 from app.celery_app import celery_app
 from app.config import settings
 from app.database import SessionLocal
-from app.models import Clip, Job, Video
+from app.models import Clip, Job, RelaxingVideo, Video
 from app.routers import watermark
 from app.services import audio_analysis, face_detection, hashtags, video_cutter, video_downloader
 from app.services.transcription import segments_overlapping, transcribe, write_srt
@@ -173,6 +174,24 @@ def process_video(self, job_id: str) -> None:
             job.add_log(f"Janela do streamer detectada em {streamer_region} — usando layout de tela dividida.")
         else:
             job.add_log("Nenhuma janela de streamer detectada — usando corte central padrão.")
+
+        # Vídeo relaxante de fundo (ver Job.relaxing_video_id/
+        # use_relaxing_video_fallback e app/services/video_cutter.py) — só faz
+        # sentido escolher um se não tem streamer_region (os dois layouts de
+        # tela dividida são mutuamente exclusivos) e o usuário não desligou
+        # ("sem janela"). Escolhido UMA vez pro job inteiro (não por clipe) —
+        # um recut mais tarde reaproveita o mesmo via resolve_job_render_defaults,
+        # em vez de sortear um vídeo diferente a cada edição. Só é de fato
+        # USADO nos clipes em que a detecção de rosto não achar ninguém (ver
+        # video_cutter.py) — clipes com rosto detectável ignoram isso.
+        if streamer_region is None and job.use_relaxing_video_fallback:
+            pool = db.query(RelaxingVideo).all()
+            if pool:
+                chosen = random.choice(pool)
+                job.relaxing_video_id = chosen.id
+                job.add_log(f"Vídeo relaxante '{chosen.title or chosen.id}' disponível como fallback pra trechos sem rosto detectável.")
+            else:
+                job.add_log("Nenhum vídeo relaxante cadastrado (POST /relaxing-videos) — trechos sem rosto usam o crop central padrão.")
         db.commit()
 
         for i, candidate in enumerate(candidates):
@@ -199,6 +218,11 @@ def process_video(self, job_id: str) -> None:
                 caption_style=job.caption_style or "bold_outline",
                 caption_font_family=job.caption_font_family or "DejaVu Sans",
                 streamer_region=streamer_region,
+                relaxing_video_path=(
+                    Path(job.relaxing_video.filepath)
+                    if job.relaxing_video is not None and job.relaxing_video.filepath
+                    else None
+                ),
             )
 
             clip = Clip(

@@ -4,6 +4,7 @@ adiciona uma camada Python em cima do ffmpeg sem necessidade aqui).
 """
 import json
 import logging
+import random
 import shutil
 import subprocess
 from pathlib import Path
@@ -351,6 +352,7 @@ def cut_and_render_vertical(
     streamer_region: tuple[int, int, int, int] | None = None,
     manual_pan_track: list[tuple[float, float]] | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
+    relaxing_video_path: Path | None = None,
 ) -> None:
     """Corta o trecho [start, end] do vídeo e renderiza em 1080x1920 (9:16),
     30fps, com legenda queimada (se fornecida), marca d'água/logo (se
@@ -369,6 +371,18 @@ def cut_and_render_vertical(
     acompanha o rosto (`manual_pan_track` se fornecido pelo usuário, senão
     `face_detection.track_horizontal_pan` automático) — cai pro crop central
     estático se nenhum dos dois achar nada confiável.
+
+    `relaxing_video_path`: usado só quando NÃO há `streamer_region` e a
+    detecção de rosto (automática ou manual) não achou nada confiável —
+    vídeo de narração pura, sem ninguém pra focar. Nesse caso, em vez do
+    crop central estático, monta o mesmo layout de tela dividida do
+    streamer_region (ver STREAMER_TOP_HEIGHT_PX), só que com o vídeo
+    ORIGINAL (crop central de sempre) em cima e esse vídeo "relaxante" (uma
+    segunda fonte, tipicamente algo tipo parkour/slime — ver
+    app/routers/relaxing_videos.py) em baixo, dando um pouco de estímulo
+    visual pra quem só está ouvindo a narração. Ignorado quando
+    `streamer_region` está ativo ou quando um pan (manual ou automático) foi
+    encontrado (aí o próprio vídeo já tem algo/alguém interessante pra focar).
 
     `keep_segments`: lista de (início, fim) em segundos relativos a `start`
     (0 = `start`) dos trechos do MEIO do clipe que devem sobreviver — usado
@@ -405,6 +419,15 @@ def cut_and_render_vertical(
     # -filter_complex) fazendo basicamente a mesma coisa; filter_complex é um
     # superconjunto de -vf, então não muda o resultado do caso simples.
     stages: list[str] = []
+
+    # Só usados no branch sem streamer_region (ver mais abaixo) — inicializados
+    # aqui pra sempre existirem quando o bloco de "-i"s extras (mais abaixo)
+    # decidir se inclui o vídeo relaxante ou não, independente de qual branch
+    # (streamer_region ou não) rodou de fato.
+    use_relaxing_video = False
+    relaxing_input_idx: int | None = None
+    relaxing_start = 0.0
+    relaxing_needs_loop = False
 
     # `video_src`/`audio_map` apontam pro que o resto do pipeline deve usar
     # como "o vídeo/áudio de entrada" — normalmente o próprio input 0, mas
@@ -538,15 +561,65 @@ def cut_and_render_vertical(
         except Exception:  # noqa: BLE001 — é um "extra", nunca deve derrubar o corte
             logger.exception("Falha no rastreamento de pan (%s) — usando crop central.", video_path)
 
-        if pan_expr is not None:
-            stages.append(f"[{video_src}]scale={scaled_w}:1920[vscaled]")
-            stages.append(f"[vscaled]crop=1080:1920:x='{pan_expr}':y=0[vbase]")
+        # Vídeo relaxante: só entra em jogo se NENHUM pan foi encontrado (nem
+        # manual nem automático) — ver docstring da função. `relaxing_input_idx`
+        # é decidido AQUI (não mais embaixo, junto dos outros "-i") porque o
+        # filtro precisa saber o índice antes de montar `stages`; o restante
+        # da função (bloco "-i"/cmd) só respeita essa mesma ordem depois.
+        use_relaxing_video = (
+            pan_expr is None and relaxing_video_path is not None and relaxing_video_path.exists()
+        )
+
+        if use_relaxing_video:
+            relaxing_input_idx = 1
+            try:
+                relaxing_duration = probe_duration(relaxing_video_path)
+            except FFmpegError:
+                relaxing_duration = 0.0
+            if relaxing_duration > duration:
+                # Começa num ponto aleatório (mas que ainda sobra `duration`
+                # segundos até o fim) — só pra dar variedade entre clipes
+                # diferentes usando o mesmo vídeo relaxante, não é importante
+                # que seja determinístico.
+                relaxing_start = random.uniform(0.0, relaxing_duration - duration)
+            else:
+                # Vídeo relaxante mais curto que o clipe — `-stream_loop -1`
+                # (adicionado mais abaixo, junto do "-i" desse input) repete
+                # ele quantas vezes precisar; o "-t" de saída corta no ponto
+                # certo de qualquer jeito.
+                relaxing_needs_loop = True
+
+        if use_relaxing_video:
+            bottom_h = 1920 - STREAMER_TOP_HEIGHT_PX
+            stages.append(
+                f"[{video_src}]scale=1080:{STREAMER_TOP_HEIGHT_PX}:force_original_aspect_ratio=increase,"
+                f"crop=1080:{STREAMER_TOP_HEIGHT_PX}[topcrop]"
+            )
+            stages.append(
+                f"[{relaxing_input_idx}:v]scale=1080:{bottom_h}:force_original_aspect_ratio=increase,"
+                f"crop=1080:{bottom_h}[relaxcrop]"
+            )
+            # Legenda queimada embaixo, na fatia do vídeo relaxante — mesmo
+            # motivo/mecanismo do streamer_region (confina fisicamente a
+            # legenda a essa fatia, ver comentário lá em cima).
+            bottom_stream = "relaxcrop"
+            if has_subtitles:
+                stages.append(f"[relaxcrop]{_subtitles_filter()}[relaxcrop_sub]")
+                bottom_stream = "relaxcrop_sub"
+            stages.append(f"[topcrop][{bottom_stream}]vstack=inputs=2[vbase]")
+            current = "vbase"
         else:
-            stages.append(f"[{video_src}]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]")
-        current = "vbase"
-        if has_subtitles:
-            stages.append(f"[{current}]{_subtitles_filter()}[vsub]")
-            current = "vsub"
+            if pan_expr is not None:
+                stages.append(f"[{video_src}]scale={scaled_w}:1920[vscaled]")
+                stages.append(f"[vscaled]crop=1080:1920:x='{pan_expr}':y=0[vbase]")
+            else:
+                stages.append(
+                    f"[{video_src}]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[vbase]"
+                )
+            current = "vbase"
+            if has_subtitles:
+                stages.append(f"[{current}]{_subtitles_filter()}[vsub]")
+                current = "vsub"
 
     # IMPORTANTE: "-i watermark_path" (quando existe) precisa vir DEPOIS do
     # "-i video_path" mas ANTES de qualquer opção de saída como "-t" — opções
@@ -558,10 +631,25 @@ def cut_and_render_vertical(
     # os "-i".
     cmd = ["ffmpeg", "-y", "-ss", str(start), "-i", str(video_path)]
 
+    # O vídeo relaxante (se usado) entra logo depois do vídeo principal —
+    # `relaxing_input_idx` foi decidido lá em cima, ANTES de montar `stages`,
+    # exatamente pra bater com a ordem real dos "-i" aqui (ver comentário
+    # onde `use_relaxing_video` é calculado).
+    if use_relaxing_video:
+        if relaxing_needs_loop:
+            cmd += ["-stream_loop", "-1"]
+        else:
+            cmd += ["-ss", str(relaxing_start)]
+        cmd += ["-i", str(relaxing_video_path)]
+
+    # A marca d'água entra por ÚLTIMO, depois do vídeo relaxante (se usado) —
+    # por isso o índice não pode ser fixo "1": é 2 quando os dois estão
+    # presentes, 1 quando só a marca d'água está.
     if has_watermark:
         cmd += ["-i", str(watermark_path)]
+        watermark_input_idx = 2 if use_relaxing_video else 1
         x, y = _WATERMARK_POSITIONS.get(watermark_position, _WATERMARK_POSITIONS["bottom-right"])
-        stages.append(f"[1:v]scale={WATERMARK_WIDTH_PX}:-1[wm]")
+        stages.append(f"[{watermark_input_idx}:v]scale={WATERMARK_WIDTH_PX}:-1[wm]")
         stages.append(f"[{current}][wm]overlay={x}:{y}[vout]")
         current = "vout"
 

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     upload_dir: Path = base_dir / "uploads"
     output_dir: Path = base_dir / "outputs"
     data_dir: Path = base_dir / "data"
+    # Biblioteca de vídeos "relaxantes" de fundo (ver app/routers/relaxing_videos.py)
+    # — separado de uploads/ porque não pertence a um job específico, é
+    # compartilhado entre todos.
+    relaxing_videos_dir: Path = base_dir / "relaxing_videos"
 
     # --- Banco de dados ---
     database_url: str = "sqlite:///./data/app.db"
@@ -41,7 +45,7 @@ class Settings(BaseSettings):
     youtube_api_key: str | None = None
 
     def ensure_dirs(self) -> None:
-        for d in (self.upload_dir, self.output_dir, self.data_dir):
+        for d in (self.upload_dir, self.output_dir, self.data_dir, self.relaxing_videos_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

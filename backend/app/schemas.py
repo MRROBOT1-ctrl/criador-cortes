@@ -71,6 +71,7 @@ class JobOut(BaseModel):
     caption_color: str
     caption_style: str
     caption_font_family: str
+    use_relaxing_video_fallback: bool
     created_at: datetime
     updated_at: datetime
 
@@ -161,6 +162,10 @@ class UrlUploadRequest(BaseModel):
     caption_color: str = "#FFFFFF"
     caption_style: str = "bold_outline"
     caption_font_family: str = "DejaVu Sans"
+    # "sem janela": quando False, um vídeo de narração pura (sem streamer,
+    # sem rosto rastreável) sempre cai pro crop central simples de sempre —
+    # nunca tenta o vídeo relaxante de fundo (ver app/services/video_cutter.py).
+    use_relaxing_video_fallback: bool = True
 
 
 class WatermarkStatus(BaseModel):

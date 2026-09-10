@@ -18,6 +18,7 @@ services:
       - ./backend/uploads:/app/uploads
       - ./backend/outputs:/app/outputs
       - ./backend/data:/app/data
+      - ./backend/relaxing_videos:/app/relaxing_videos
       # Cache do modelo do Whisper (Hugging Face) — sem isso, o modelo é
       # baixado de novo da internet toda vez que a imagem é reconstruída
       # (o download em si acontece em tempo de execução, não no build, então
@@ -37,6 +38,7 @@ services:
       - ./backend/uploads:/app/uploads
       - ./backend/outputs:/app/outputs
       - ./backend/data:/app/data
+      - ./backend/relaxing_videos:/app/relaxing_videos
       # Mesmo cache do backend acima — é o worker que de fato roda a
       # transcrição (Celery task), então é aqui que o modelo baixado importa.
       - whisper_cache:/root/.cache/huggingface

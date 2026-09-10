@@ -186,6 +186,7 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
         # manual que o usuário já tinha ajustado (ver app/routers/pan.py).
         manual_pan_track=render_pan_track,
         keep_segments=cut_segments,
+        relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.transcript_text = clip_text

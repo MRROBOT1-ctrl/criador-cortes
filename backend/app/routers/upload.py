@@ -83,6 +83,7 @@ async def upload_video(
     caption_color: str = Form(default="#FFFFFF"),
     caption_style: str = Form(default="bold_outline"),
     caption_font_family: str = Form(default="DejaVu Sans"),
+    use_relaxing_video_fallback: bool = Form(default=True),
     db: Session = Depends(get_db),
 ):
     ext = Path(file.filename or "").suffix.lower()
@@ -119,6 +120,7 @@ async def upload_video(
         caption_color=caption_color,
         caption_style=caption_style,
         caption_font_family=caption_font_family,
+        use_relaxing_video_fallback=use_relaxing_video_fallback,
     )
     db.add(job)
 
@@ -192,6 +194,7 @@ def upload_from_url(payload: UrlUploadRequest, db: Session = Depends(get_db)):
         caption_color=payload.caption_color,
         caption_style=payload.caption_style,
         caption_font_family=payload.caption_font_family,
+        use_relaxing_video_fallback=payload.use_relaxing_video_fallback,
     )
     db.add(job)
 

@@ -7,7 +7,19 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
-from app.routers import captions, clip_cuts, clips, compile, download, metrics, pan, status, upload, watermark
+from app.routers import (
+    captions,
+    clip_cuts,
+    clips,
+    compile,
+    download,
+    metrics,
+    pan,
+    relaxing_videos,
+    status,
+    upload,
+    watermark,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -32,6 +44,7 @@ app.include_router(pan.router)
 app.include_router(captions.router)
 app.include_router(compile.router)
 app.include_router(clip_cuts.router)
+app.include_router(relaxing_videos.router)
 
 # Preview dos cortes prontos direto pelo navegador (<video src="/outputs/...">)
 app.mount("/outputs", StaticFiles(directory=str(settings.output_dir)), name="outputs")

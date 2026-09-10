@@ -167,6 +167,7 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
         streamer_region=defaults.streamer_region,
         manual_pan_track=render_pan_track,
         keep_segments=normalized,
+        relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.set_cut_segments(normalized)
