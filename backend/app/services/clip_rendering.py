@@ -9,10 +9,19 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.models import Job
+from app.config import settings
+from app.models import Clip, Job, Video
 from app.routers.watermark import find_watermark_file
 from app.services import hashtags, titles, video_cutter
-from app.services.transcription import Segment
+from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
+
+# Sentinela usado só por render_clip() (ver `mute_ranges` lá embaixo) — existe
+# porque `None` já é um valor válido e com significado próprio pra alguns
+# parâmetros ("descarta de propósito", não "não mexeu nisso"). Usar `None`
+# como default normal não deixaria diferenciar "o chamador não passou nada"
+# de "o chamador passou None de propósito" — só um objeto que NINGUÉM passaria
+# por acidente resolve isso.
+_UNSET = object()
 
 
 @dataclass
@@ -109,6 +118,49 @@ def remap_clip_segments(
     return remapped, " ".join(texts).strip()
 
 
+def resolve_clip_segments(
+    clip: Clip,
+    cut_segments: list[tuple[float, float]] | None,
+    start_time: float | None = None,
+    end_time: float | None = None,
+) -> tuple[list[Segment], str]:
+    """Resolve os segmentos de legenda EFETIVOS de um clipe — override
+    manual (Clip.caption_segments_override) se existir, senão a transcrição
+    do Whisper no intervalo [start_time, end_time] — já remapeados por
+    `cut_segments` (cortes internos, se houver, ver remap_clip_segments
+    acima). Retorna (segmentos_prontos_pro_srt, texto_sobrevivente) — extraído
+    de app/routers/pan.py, captions.py e clip_cuts.py, que tinham esse mesmo
+    bloco duplicado quase idêntico.
+
+    `start_time`/`end_time` default pra clip.start_time/clip.end_time —
+    suficiente pros 3 endpoints que nunca movem o intervalo do clipe (pan,
+    captions, clip_cuts: o clipe em si não muda de tempo nesses três, só o
+    que é feito com ele). Só clips.py::recut_clip precisa passar os dois
+    explicitamente: no branch SEM override manual de legenda, ele recalcula
+    a partir de um intervalo NOVO — que só é gravado em clip.start_time/
+    clip.end_time DEPOIS do render dar certo (ver recut_clip), então nesse
+    momento clip.start_time/clip.end_time ainda são os valores ANTIGOS."""
+    effective_start = start_time if start_time is not None else clip.start_time
+    effective_end = end_time if end_time is not None else clip.end_time
+
+    caption_override = clip.get_caption_segments_override()
+    if caption_override is not None:
+        # Override é guardado relativo ao início do clipe — soma
+        # effective_start de volta só pra reaproveitar remap_clip_segments,
+        # que espera tempos ABSOLUTOS no vídeo original (ela subtrai de novo).
+        clip_segments = [
+            Segment(start=s["start"] + effective_start, end=s["end"] + effective_start, text=s["text"])
+            for s in caption_override
+        ]
+    else:
+        transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
+        clip_segments = (
+            segments_overlapping(transcript_segments, effective_start, effective_end)
+            if transcript_segments else []
+        )
+    return remap_clip_segments(clip_segments, effective_start, cut_segments)
+
+
 def compute_clip_metadata(text: str) -> tuple[str, str]:
     """Recalcula hashtags + títulos sugeridos a partir do texto do trecho,
     já como strings JSON prontas pra Clip.hashtags/Clip.suggested_titles —
@@ -197,3 +249,93 @@ def safe_rerender(
         if cleanup_srt and srt_path is not None:
             srt_path.unlink(missing_ok=True)
     tmp_path.replace(output_path)  # troca atômica (mesmo filesystem) só após sucesso
+
+
+def render_clip(
+    clip: Clip,
+    video: Video,
+    job: Job | None,
+    *,
+    start_time: float | None = None,
+    end_time: float | None = None,
+    captions_enabled: bool | None = None,
+    caption_font_size: int | None = None,
+    caption_color: str | None = None,
+    caption_style: str | None = None,
+    caption_font_family: str | None = None,
+    srt_segments: list[Segment] | None = None,
+    manual_pan_track: list[tuple[float, float]] | None = None,
+    cut_segments: list[tuple[float, float]] | None = None,
+    mute_ranges: list[tuple[float, float]] | None | object = _UNSET,
+) -> None:
+    """Centraliza a chamada de safe_rerender aplicando os defaults do JOB
+    (via resolve_job_render_defaults) pra tudo que não foi explicitamente
+    sobrescrito por parâmetro — cada router só passa o que É diferente do
+    default, em vez de repetir os mesmos ~12 kwargs toda vez (eram idênticos
+    em captions.py, clip_cuts.py, clips.py e pan.py).
+
+    `start_time`/`end_time`: default pro intervalo ATUAL do clipe
+    (clip.start_time/clip.end_time) — só recut_clip passa um intervalo NOVO
+    explicitamente (mesmo motivo de resolve_clip_segments acima).
+
+    `srt_segments`: já resolvidos pelo chamador (normalmente via
+    resolve_clip_segments) — essa função só escreve o .srt TEMPORÁRIO (se o
+    `captions_enabled` resultante permitir) e deixa o safe_rerender limpar
+    ele depois (cleanup_srt=True). Quem chama continua responsável por virar
+    esse retorno em transcript_text/hashtags/títulos (ver
+    compute_clip_metadata) — render_clip só cuida do arquivo de vídeo.
+
+    `manual_pan_track`/`cut_segments`: sempre explícitos por quem chama —
+    cada router já sabe se deve usar o valor salvo no clipe, um valor NOVO
+    ainda não salvo, ou um remapeado (ver comentários em cada router). Essa
+    função não tenta adivinhar, só repassa pro safe_rerender.
+
+    `mute_ranges`: ÚNICO parâmetro com semântica de 3 estados, por isso o
+    sentinel `_UNSET` como default (em vez de `None`):
+      - omitido (default) = usa `clip.get_mute_ranges()` — "não mexe nisso,
+        preserva o que já tava configurado" (pan.py, captions.py, e
+        recut_clip quando o intervalo NÃO muda);
+      - lista explícita = usa ela (já remapeada pelo chamador quando
+        necessário — ver clip_cuts.py, que remapeia pelos cortes internos
+        NOVOS antes de passar aqui);
+      - `None` EXPLÍCITO = descarta de propósito (recut_clip quando o
+        intervalo MUDA — o mute antigo foi calculado pro trecho antigo, não
+        faz mais sentido no novo).
+    Não confundir os dois últimos era exatamente o bug que o pan.py tinha
+    antes desse refactor: nem passava o parâmetro pro safe_rerender, então
+    um clipe com palavra censurada (filtro de palavrões, modo "censor")
+    perdia o mute silenciosamente ao ajustar o zoom manual — ver fix
+    correspondente em app/routers/pan.py.
+    """
+    defaults = resolve_job_render_defaults(job)
+    render_start = start_time if start_time is not None else clip.start_time
+    render_end = end_time if end_time is not None else clip.end_time
+    effective_mute_ranges = clip.get_mute_ranges() if mute_ranges is _UNSET else mute_ranges
+    resolved_captions_enabled = captions_enabled if captions_enabled is not None else defaults.captions_enabled
+
+    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_rerender_{uuid.uuid4().hex[:8]}.srt"
+    srt_path = None
+    if resolved_captions_enabled and srt_segments:
+        write_srt(srt_segments, tmp_srt_path, offset=0.0)
+        srt_path = tmp_srt_path
+
+    safe_rerender(
+        Path(video.filepath),
+        render_start,
+        render_end,
+        Path(clip.processed_path),
+        srt_path=srt_path,
+        cleanup_srt=True,
+        watermark_path=defaults.watermark_path,
+        watermark_position=defaults.watermark_position,
+        captions_enabled=resolved_captions_enabled,
+        caption_font_size=caption_font_size if caption_font_size is not None else defaults.caption_font_size,
+        caption_color=caption_color if caption_color is not None else defaults.caption_color,
+        caption_style=caption_style if caption_style is not None else defaults.caption_style,
+        caption_font_family=caption_font_family if caption_font_family is not None else defaults.caption_font_family,
+        streamer_region=defaults.streamer_region,
+        manual_pan_track=manual_pan_track,
+        keep_segments=cut_segments,
+        mute_ranges=effective_mute_ranges,
+        relaxing_video_path=defaults.relaxing_video_path,
+    )

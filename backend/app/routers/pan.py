@@ -9,7 +9,6 @@ Só se aplica a vídeo SOLO (sem streamer_region/layout de tela dividida — ver
 Job.streamer_region): não há suporte ainda pra combinar pan manual com o
 layout de streamer+gameplay.
 """
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,13 +20,11 @@ from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
 from app.services.clip_rendering import (
-    remap_clip_segments,
     remap_pan_track,
+    render_clip,
+    resolve_clip_segments,
     resolve_job_render_defaults,
-    safe_rerender,
 )
-from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
-from app.config import settings
 
 router = APIRouter(tags=["pan"])
 
@@ -107,33 +104,15 @@ def set_pan_keyframes(clip_id: str, payload: PanKeyframesIn, db: Session = Depen
     keyframes = [(kf.t, kf.cx) for kf in payload.keyframes] or None
     clip.set_manual_pan_keyframes(keyframes)
 
-    # A legenda/hashtags não mudam aqui (só o enquadramento) — reaproveita o
-    # texto já transcrito pro intervalo atual do clipe pra religar a mesma
-    # legenda de sempre, sem precisar de um recut completo. Se existir uma
-    # legenda editada manualmente (ver app/routers/captions.py), usa ELA em
-    # vez da transcrição crua do Whisper — senão ajustar só o enquadramento
-    # descartaria silenciosamente uma correção de texto já feita (mesmo
-    # cuidado que já existe em clips.py::recut_clip e clip_cuts.py). Cortes
-    # internos (ver app/routers/clip_cuts.py) passam pelo mesmo remapeamento
-    # de tempo de sempre — `remap_clip_segments` cuida disso nos dois casos.
+    # A legenda/hashtags não mudam aqui (só o enquadramento) — resolve_clip_segments
+    # já cuida de reaproveitar uma legenda editada manualmente (ver
+    # app/routers/captions.py) em vez da transcrição crua do Whisper (senão
+    # ajustar só o enquadramento descartaria silenciosamente uma correção de
+    # texto já feita — mesmo cuidado que já existe em clips.py::recut_clip e
+    # clip_cuts.py) e de remapear pelos cortes internos já configurados (ver
+    # app/routers/clip_cuts.py).
     cut_segments = clip.get_cut_segments()
-    caption_override = clip.get_caption_segments_override()
-    if caption_override is not None:
-        clip_segments = [
-            Segment(start=s["start"] + clip.start_time, end=s["end"] + clip.start_time, text=s["text"])
-            for s in caption_override
-        ]
-    else:
-        transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
-        clip_segments = (
-            segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
-        )
-    srt_segments, _ = remap_clip_segments(clip_segments, clip.start_time, cut_segments)
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_pan_{uuid.uuid4().hex[:8]}.srt"
-    srt_path = None
-    if defaults.captions_enabled and srt_segments:
-        write_srt(srt_segments, tmp_srt_path, offset=0.0)
-        srt_path = tmp_srt_path
+    srt_segments, _ = resolve_clip_segments(clip, cut_segments)
 
     # Os keyframes recém-mandados pelo usuário estão nas coordenadas do
     # clipe ATUAL (pré-corte) — precisam do mesmo remapeamento pra bater com
@@ -141,24 +120,19 @@ def set_pan_keyframes(clip_id: str, payload: PanKeyframesIn, db: Session = Depen
     # banco continua pré-corte, ver docstring de remap_pan_track).
     render_pan_track = remap_pan_track(keyframes, cut_segments)
 
-    safe_rerender(
-        Path(video.filepath),
-        clip.start_time,
-        clip.end_time,
-        Path(clip.processed_path),
-        srt_path=srt_path,
-        cleanup_srt=True,
-        watermark_path=defaults.watermark_path,
-        watermark_position=defaults.watermark_position,
-        captions_enabled=defaults.captions_enabled,
-        caption_font_size=defaults.caption_font_size,
-        caption_color=defaults.caption_color,
-        caption_style=defaults.caption_style,
-        caption_font_family=defaults.caption_font_family,
-        streamer_region=None,
+    render_clip(
+        clip,
+        video,
+        job,
+        srt_segments=srt_segments,
         manual_pan_track=render_pan_track,
-        keep_segments=cut_segments,
-        relaxing_video_path=defaults.relaxing_video_path,
+        cut_segments=cut_segments,
+        # fix: este router estava descartando mute_ranges no re-render (nem
+        # passava o parâmetro pro safe_rerender) — um clipe com palavra
+        # censurada pelo filtro de palavrões (modo "censor") perdia o mute
+        # silenciosamente ao ajustar o zoom manual aqui. Passa explícito o
+        # que já estava salvo, igual aos outros 3 routers de re-render.
+        mute_ranges=clip.get_mute_ranges(),
     )
 
     db.commit()

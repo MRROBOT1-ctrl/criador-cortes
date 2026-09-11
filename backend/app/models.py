@@ -284,4 +284,15 @@ class RelaxingVideo(Base):
     title = Column(String, nullable=True)
     duration = Column(Float, nullable=True)  # segundos
     source_url = Column(String, nullable=True)
+
+    # Download roda em background (Celery, ver app/tasks/relaxing_videos_pipeline.py)
+    # — POST /relaxing-videos cria o registro já como "downloading" (filepath
+    # ainda vazio) e retorna na hora, sem esperar o yt-dlp terminar (vídeo de
+    # 30min travava a request por minutos e estourava timeout de proxy).
+    # "ready" = filepath/title/duration preenchidos de verdade. "failed" = deu
+    # erro no download, ver error_message (a task NUNCA relança exceção — só
+    # marca failed e retorna — pra não entrar num loop de retry infinito).
+    status = Column(String, default="downloading")  # downloading | ready | failed
+    error_message = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)

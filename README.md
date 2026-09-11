@@ -71,6 +71,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
+> **Schema mudou? Sem Alembic aqui ainda** (ver "Próximos passos" no fim
+> deste arquivo) — `init_db()` só CRIA tabelas que não existem
+> (`Base.metadata.create_all`), não adiciona coluna nova em tabela já
+> existente. Se você já tem um `backend/data/app.db` de antes e o app
+> passar a reclamar de coluna faltando, duas saídas: apague
+> `backend/data/app.db` (perde todos os jobs/clipes já processados) ou
+> rode um `ALTER TABLE` manual pra cada coluna nova (mais seguro pra não
+> perder dado de dev). Colunas adicionadas depois do schema inicial:
+> `jobs.profanity_filter`, `clips.suggested_titles`, `clips.mute_ranges`,
+> `relaxing_videos.status`, `relaxing_videos.error_message`.
+
 - API: http://localhost:8000 (docs interativas em `/docs`)
 - Telinha de métricas: http://localhost:8000/ui/metrics.html
 - Frontend: http://localhost:5173 (via `docker compose up --build`, serviço
@@ -108,6 +119,10 @@ subir o serviço `frontend` do compose nesse caso).
 | GET | `/watermark/file` | Serve a imagem da logo atual (preview) |
 | GET | `/jobs` | Lista todos os jobs (resumo: status, data, vídeo, contagem de clipes) pra tela "Meus cortes" |
 | DELETE | `/jobs/{job_id}` | Apaga o job (cascata: Video→Job→Clip→Metric) e os arquivos em disco |
+| GET | `/relaxing-videos` | Lista a biblioteca de vídeos relaxantes de fundo (com `status`) |
+| POST | `/relaxing-videos` | Cria o registro (`status="downloading"`) e baixa via `yt-dlp` em BACKGROUND (Celery) — retorna **202** na hora, não espera o download terminar |
+| GET | `/relaxing-videos/{id}` | Consulta o status de um vídeo relaxante (usado pro frontend fazer polling até "ready"/"failed") |
+| DELETE | `/relaxing-videos/{id}` | Apaga o registro (e o arquivo, se já baixado) — funciona mesmo com o download em andamento |
 
 ## Revisão de código (2026-09-10)
 

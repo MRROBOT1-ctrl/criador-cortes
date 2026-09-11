@@ -4,21 +4,22 @@ usados como fallback visual em clipes de narração pura, sem streamer nem
 rosto rastreável (ver app/services/video_cutter.py, `relaxing_video_path`, e
 Job.use_relaxing_video_fallback/relaxing_video_id em app/models.py).
 
-Baixados via yt-dlp a partir de um link, mesmo mecanismo já usado pro
-upload por link do vídeo principal (ver app/services/video_downloader.py).
+Baixados via yt-dlp a partir de um link, em BACKGROUND via Celery (ver
+app/tasks/relaxing_videos_pipeline.py) — POST cria o registro (status=
+"downloading") e retorna na hora, sem esperar o yt-dlp terminar (um vídeo de
+30min travando a request por minutos estourava timeout de proxy e dava a
+entender pro frontend que a request tinha quebrado). O cliente faz polling em
+GET /relaxing-videos/{id} até o status virar "ready" ou "failed".
 """
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.models import RelaxingVideo
-from app.services import video_downloader
-from app.services.video_cutter import FFmpegError, probe_duration
+from app.tasks.relaxing_videos_pipeline import download_relaxing_video
 
 router = APIRouter(tags=["relaxing_videos"])
 
@@ -32,6 +33,8 @@ class RelaxingVideoOut(BaseModel):
     title: str | None
     duration: float | None
     source_url: str | None
+    status: str  # downloading | ready | failed
+    error_message: str | None
 
     class Config:
         from_attributes = True
@@ -43,47 +46,45 @@ def list_relaxing_videos(db: Session = Depends(get_db)):
     return videos
 
 
-@router.post("/relaxing-videos", response_model=RelaxingVideoOut)
+@router.get("/relaxing-videos/{video_id}", response_model=RelaxingVideoOut)
+def get_relaxing_video(video_id: str, db: Session = Depends(get_db)):
+    """Consulta o status de UM vídeo relaxante — usado pelo frontend pra
+    fazer polling depois do POST (que retorna antes do download terminar)."""
+    video = db.get(RelaxingVideo, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Vídeo relaxante não encontrado.")
+    return video
+
+
+@router.post("/relaxing-videos", response_model=RelaxingVideoOut, status_code=202)
 def add_relaxing_video(payload: RelaxingVideoAddRequest, db: Session = Depends(get_db)):
-    # filepath="" (não None) só pra passar pela constraint NOT NULL até o
-    # download terminar e a gente saber o caminho de verdade — mesmo truque
-    # já usado em routers/upload.py::upload_video.
-    video = RelaxingVideo(source_url=payload.url, filepath="")
+    """Cria o registro (status="downloading", filepath ainda vazio) e
+    dispara o download em background — não espera o yt-dlp terminar. 202
+    (Accepted) em vez do 200 de sempre: a resposta não representa mais o
+    recurso PRONTO, representa "aceito, processando" (ver GET pra polling)."""
+    video = RelaxingVideo(source_url=payload.url, filepath="", status="downloading")
     db.add(video)
-    db.flush()  # gera o id sem commitar ainda, pra usar no nome do arquivo
-
-    dest_dir = settings.relaxing_videos_dir
-    tmp_dir = dest_dir / video.id
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        downloaded_path, title = video_downloader.download_video(payload.url, tmp_dir)
-    except video_downloader.VideoDownloadError as exc:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    # `download_video` baixa pra uma pasta própria (dest_dir/{id}/original.*)
-    # — mesma convenção do vídeo principal, reaproveitada sem modificar o
-    # helper. Move pra um nome mais simples direto em relaxing_videos/{id}.mp4
-    # (não tem "job" aqui, não precisa da subpasta).
-    final_path = dest_dir / f"{video.id}{downloaded_path.suffix}"
-    shutil.move(str(downloaded_path), str(final_path))
-    downloaded_path.parent.rmdir()  # pasta temporária agora vazia
-
-    try:
-        duration = probe_duration(final_path)
-    except FFmpegError:
-        duration = None
-
-    video.filepath = str(final_path)
-    video.title = title
-    video.duration = duration
     db.commit()
     db.refresh(video)
+
+    download_relaxing_video.delay(video.id)
+
     return video
 
 
 @router.delete("/relaxing-videos/{video_id}")
 def delete_relaxing_video(video_id: str, db: Session = Depends(get_db)):
+    """Apaga o registro (e o arquivo em disco, se já tiver sido baixado).
+
+    Funciona em qualquer status, inclusive "downloading" (a task Celery pode
+    estar rodando nesse exato momento): `video.filepath` continua "" até o
+    download terminar de verdade, então o `if` abaixo naturalmente só apaga
+    o REGISTRO nesse caso (nada pra desligar no arquivo — ele ainda não
+    existe). Se a task estiver no meio do download quando esse DELETE
+    commitar, ela detecta o registro sumido (reconsulta o banco, não confia
+    em cache — ver _get_fresh em app/tasks/relaxing_videos_pipeline.py) e
+    aborta sozinha sem crashar, inclusive limpando o arquivo se o download
+    já tiver terminado bem nesse meio-tempo (ver mesmo módulo)."""
     video = db.get(RelaxingVideo, video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Vídeo relaxante não encontrado.")

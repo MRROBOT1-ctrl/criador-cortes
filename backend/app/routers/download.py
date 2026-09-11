@@ -1,12 +1,14 @@
 """Listagem de clipes gerados e download (individual ou ZIP com todos)."""
 import json
+import os
 import re
 import shutil
 import zipfile
+from email.utils import formatdate
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -20,10 +22,30 @@ _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 _RANGE_CHUNK_SIZE = 1024 * 1024  # 1MB por chunk
 
 
+def _etag_for(file_stat: os.stat_result) -> str:
+    """ETag "forte" a partir de mtime (em nanossegundos, pra granularidade
+    fina) + tamanho — muda sempre que o arquivo é reescrito (ex: um recut),
+    mesmo que o tamanho em bytes dê a mesma coisa por coincidência. Calculado
+    do zero a cada request (sem cache em memória, de propósito — um
+    `stat()` é barato o bastante, e cachear traria o risco de servir um ETag
+    velho depois de um recut)."""
+    return f'"{file_stat.st_mtime_ns}-{file_stat.st_size}"'
+
+
+def _etag_matches(header_value: str, etag: str) -> bool:
+    """Compara um header If-None-Match/If-Range (que pode ser um ETag só,
+    uma lista separada por vírgula, ou "*") contra o ETag atual do arquivo."""
+    header_value = header_value.strip()
+    if header_value == "*":
+        return True
+    return etag in (v.strip() for v in header_value.split(","))
+
+
 def _ranged_file_response(
     path: Path, request: Request, media_type: str = "video/mp4", filename: str | None = None,
-) -> StreamingResponse | FileResponse:
-    """Serve um arquivo respeitando o header `Range`, se presente.
+) -> Response | StreamingResponse | FileResponse:
+    """Serve um arquivo respeitando o header `Range`, se presente, e os
+    condicionais `If-None-Match`/`If-Range` (ver ETag/Last-Modified abaixo).
 
     IMPORTANTE: `FileResponse` do Starlette (pelo menos até 0.38.x, versão
     usada aqui) NÃO implementa suporte a Range nenhum — sempre manda o
@@ -31,16 +53,50 @@ def _ranged_file_response(
     scrub do editor: um vídeo de 1GB+ vinha inteiro em toda seek do
     `<video>`, o que travaria o navegador). Essa função implementa o 206
     Partial Content manualmente por cima de um `StreamingResponse`.
+
+    ETag/Last-Modified existem por causa de um recut: se o arquivo é
+    reescrito ENQUANTO o navegador está no meio de um seek (várias
+    requisições Range pro mesmo vídeo), sem um jeito de saber se o arquivo
+    mudou, o cliente podia acabar juntando bytes de duas versões diferentes
+    do vídeo sem erro nenhum. Com ETag, isso fica detectável:
+      - `If-None-Match` batendo com o ETag atual -> 304 (conteúdo não mudou,
+        cliente já tem em cache), sem corpo, em qualquer request (com ou sem
+        Range).
+      - `If-Range` (só faz sentido junto de `Range`) que NÃO bate com o ETag
+        atual -> o arquivo mudou desde a última vez que o cliente viu esse
+        ETag, então ignora o Range pedido e manda o arquivo INTEIRO (200) em
+        vez de um pedaço que já não corresponde mais ao arquivo de agora
+        (ver RFC 7233 §3.2 — é exatamente esse o propósito do If-Range).
     """
-    file_size = path.stat().st_size
+    file_stat = path.stat()
+    file_size = file_stat.st_size
+    etag = _etag_for(file_stat)
+    last_modified = formatdate(file_stat.st_mtime, usegmt=True)
+
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match is not None and _etag_matches(if_none_match, etag):
+        # 304 não pode ter Content-Type/Content-Length de corpo nenhum —
+        # só os headers de validação, que o cliente já tem consigo mesmo.
+        return Response(status_code=304, headers={"ETag": etag, "Last-Modified": last_modified})
+
     range_header = request.headers.get("range")
+    if_range = request.headers.get("if-range")
+    # Range só é honrado se NÃO tiver If-Range, ou se tiver e ele bater com o
+    # ETag atual — um If-Range que não bate significa "o arquivo que eu
+    # conhecia não é mais esse", então cai pro comportamento sem Range
+    # (arquivo inteiro) só substituindo o `range_header` por None aqui.
+    if range_header is not None and if_range is not None and not _etag_matches(if_range, etag):
+        range_header = None
 
     if range_header is None:
-        # Sem Range: manda o arquivo inteiro, mas avisa que sabe servir
-        # ranges — é esse header que faz o navegador passar a pedir por
-        # partes nas próximas requisições (seek do <video>, por exemplo).
+        # Sem Range (ou If-Range invalidado acima): manda o arquivo inteiro,
+        # mas avisa que sabe servir ranges — é esse header que faz o
+        # navegador passar a pedir por partes nas próximas requisições (seek
+        # do <video>, por exemplo).
         response = FileResponse(path, media_type=media_type, filename=filename)
         response.headers["Accept-Ranges"] = "bytes"
+        response.headers["ETag"] = etag
+        response.headers["Last-Modified"] = last_modified
         return response
 
     match = _RANGE_RE.match(range_header)
@@ -69,6 +125,8 @@ def _ranged_file_response(
         "Content-Range": f"bytes {start}-{end}/{file_size}",
         "Accept-Ranges": "bytes",
         "Content-Length": str(end - start + 1),
+        "ETag": etag,
+        "Last-Modified": last_modified,
     }
     if filename:
         headers["Content-Disposition"] = f'inline; filename="{filename}"'

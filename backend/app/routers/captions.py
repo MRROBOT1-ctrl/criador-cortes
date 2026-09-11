@@ -12,7 +12,6 @@ se existir, senão derivado do Whisper pro intervalo atual do clipe) e PUT
 valida + persiste + re-renderiza usando os helpers de
 app/services/clip_rendering.py.
 """
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,8 +24,8 @@ from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
 from app.services import clip_rendering
-from app.services.clip_rendering import remap_clip_segments, remap_pan_track, resolve_job_render_defaults, safe_rerender
-from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
+from app.services.clip_rendering import remap_pan_track, render_clip, resolve_clip_segments
+from app.services.transcription import load_transcript_segments, segments_overlapping
 
 router = APIRouter(tags=["captions"])
 
@@ -114,7 +113,6 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
         raise HTTPException(status_code=409, detail="Clipe ainda não possui um arquivo processado para sobrescrever.")
 
     job = db.get(Job, clip.job_id)
-    defaults = resolve_job_render_defaults(job)
 
     clip_duration = clip.end_time - clip.start_time
     _validate_caption_lines(payload.segments, clip_duration)
@@ -134,64 +132,31 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
     # interno já configurado (ver app/routers/clip_cuts.py).
     cut_segments = clip.get_cut_segments()
 
-    if override is not None:
-        # O override é armazenado em tempo relativo ao início do CLIPE
-        # (pré-corte) — soma `clip.start_time` de volta só pra reaproveitar
-        # `remap_clip_segments`, que espera tempos ABSOLUTOS no vídeo
-        # original e já cuida de descontar o offset E remapear pelos cortes
-        # internos numa passada só (mesma função usada por recut_clip/
-        # clip_cuts.py, evita ter uma terceira forma de calcular isso).
-        override_segments = [
-            Segment(start=s["start"] + clip.start_time, end=s["end"] + clip.start_time, text=s["text"])
-            for s in override
-        ]
-        srt_segments, clip_text = remap_clip_segments(override_segments, clip.start_time, cut_segments)
-    else:
-        # Override removido: volta a derivar a legenda da transcrição do
-        # Whisper pro intervalo atual do clipe, igual ao recut normal.
-        transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
-        clip_segments = (
-            segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
-        )
-        srt_segments, clip_text = remap_clip_segments(clip_segments, clip.start_time, cut_segments)
-
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_captions_{uuid.uuid4().hex[:8]}.srt"
-    srt_path = None
-    if defaults.captions_enabled and srt_segments:
-        write_srt(srt_segments, tmp_srt_path, offset=0.0)
-        srt_path = tmp_srt_path
+    # resolve_clip_segments já lê o override que acabou de ser salvo (ou sua
+    # ausência) direto do `clip` — mesma lógica que estava duplicada aqui,
+    # em pan.py e em clip_cuts.py.
+    srt_segments, clip_text = resolve_clip_segments(clip, cut_segments)
 
     # Pan manual (se houver) também precisa do mesmo remapeamento pelos
     # cortes internos só pra ESSA renderização — o valor salvo continua
     # pré-corte (ver docstring de remap_pan_track).
     render_pan_track = remap_pan_track(clip.get_manual_pan_keyframes(), cut_segments)
 
-    safe_rerender(
-        Path(video.filepath),
-        clip.start_time,
-        clip.end_time,
-        Path(clip.processed_path),
-        srt_path=srt_path,
-        cleanup_srt=True,
-        watermark_path=defaults.watermark_path,
-        watermark_position=defaults.watermark_position,
-        captions_enabled=defaults.captions_enabled,
-        caption_font_size=defaults.caption_font_size,
-        caption_color=defaults.caption_color,
-        caption_style=defaults.caption_style,
-        caption_font_family=defaults.caption_font_family,
-        streamer_region=defaults.streamer_region,
+    render_clip(
+        clip,
+        video,
+        job,
+        srt_segments=srt_segments,
         # Reaproveita o pan manual já configurado nesse clipe (se houver) —
         # editar só a legenda não pode silenciosamente jogar fora um zoom
         # manual que o usuário já tinha ajustado (ver app/routers/pan.py).
         manual_pan_track=render_pan_track,
-        keep_segments=cut_segments,
+        cut_segments=cut_segments,
         # Nada aqui muda o intervalo do clipe nem os cortes internos — as
         # janelas mutadas pelo filtro de palavrões (se houver) continuam
         # válidas do jeito que estão, sem precisar remapear (ver clip_cuts.py
         # pro caso em que os cortes internos MUDAM).
         mute_ranges=clip.get_mute_ranges(),
-        relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.transcript_text = clip_text

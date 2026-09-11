@@ -268,12 +268,21 @@ export async function listRelaxingVideos(): Promise<RelaxingVideoOut[]> {
   return handleJson<RelaxingVideoOut[]>(res);
 }
 
+// Retorna na hora com status="downloading" (202) — o download roda em
+// background no worker Celery. Ver getRelaxingVideo pra fazer polling.
 export async function addRelaxingVideo(url: string): Promise<RelaxingVideoOut> {
   const res = await fetch(`${API_URL}/relaxing-videos`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   });
+  return handleJson<RelaxingVideoOut>(res);
+}
+
+// Consulta o status de UM vídeo relaxante — usado pra fazer polling depois
+// do addRelaxingVideo, até status virar "ready" ou "failed".
+export async function getRelaxingVideo(id: string): Promise<RelaxingVideoOut> {
+  const res = await fetch(`${API_URL}/relaxing-videos/${id}`);
   return handleJson<RelaxingVideoOut>(res);
 }
 

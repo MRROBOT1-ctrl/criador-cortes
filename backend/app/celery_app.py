@@ -7,7 +7,7 @@ celery_app = Celery(
     "videocutterai",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.pipeline"],
+    include=["app.tasks.pipeline", "app.tasks.relaxing_videos_pipeline"],
 )
 
 celery_app.conf.update(

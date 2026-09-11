@@ -7,27 +7,18 @@ ser MANTIDOS; o restante vira um "buraco" removido e os pedaços que sobram
 são concatenados sem ele (ver app/services/video_cutter.py,
 `cut_and_render_vertical`/`keep_segments`/`remap_time_through_cuts`).
 """
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
 from app.services import clip_rendering
-from app.services.clip_rendering import (
-    remap_clip_segments,
-    remap_mute_ranges,
-    remap_pan_track,
-    resolve_job_render_defaults,
-    safe_rerender,
-)
-from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
+from app.services.clip_rendering import remap_mute_ranges, remap_pan_track, render_clip, resolve_clip_segments
 
 router = APIRouter(tags=["clip_cuts"])
 
@@ -119,38 +110,15 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
     normalized = _normalize(keep_segments, clip_duration)
 
     job = db.get(Job, clip.job_id)
-    defaults = resolve_job_render_defaults(job)
 
-    # Legenda: se o clipe tem um texto editado manualmente (ver
-    # app/routers/captions.py), reaproveita ELE em vez de recalcular a
+    # Legenda: resolve_clip_segments já reaproveita um texto editado
+    # manualmente (ver app/routers/captions.py) em vez de recalcular a
     # transcrição pura do Whisper — senão configurar cortes internos
-    # descartaria silenciosamente uma correção de legenda já feita. Nos dois
-    # casos, `remap_clip_segments` cuida de descontar clip.start_time E
-    # remapear pelos novos buracos removidos numa passada só (o override,
-    # armazenado em tempo relativo ao clipe/pré-corte, precisa somar
-    # `clip.start_time` de volta só pra reaproveitar essa função, que espera
-    # tempos ABSOLUTOS no vídeo original).
-    caption_override = clip.get_caption_segments_override()
-    if caption_override is not None:
-        clip_segments = [
-            Segment(start=s["start"] + clip.start_time, end=s["end"] + clip.start_time, text=s["text"])
-            for s in caption_override
-        ]
-    else:
-        transcript_segments = load_transcript_segments(settings.data_dir / clip.job_id)
-        clip_segments = (
-            segments_overlapping(transcript_segments, clip.start_time, clip.end_time) if transcript_segments else []
-        )
-    srt_segments, clip_text = remap_clip_segments(clip_segments, clip.start_time, normalized)
-
-    # Token aleatório no nome: duas edições concorrentes desse mesmo clipe
-    # (ex: PUT /cuts e PUT /captions ao mesmo tempo) não podem disputar o
-    # MESMO arquivo .srt enquanto cada ffmpeg ainda está lendo o seu.
-    tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_cuts_{uuid.uuid4().hex[:8]}.srt"
-    srt_path = None
-    if defaults.captions_enabled and srt_segments:
-        write_srt(srt_segments, tmp_srt_path, offset=0.0)
-        srt_path = tmp_srt_path
+    # descartaria silenciosamente uma correção de legenda já feita. IMPORTANTE
+    # aqui: passa `normalized` (os cortes NOVOS recém-validados, ainda não
+    # salvos no clipe) — não clip.get_cut_segments() (o valor ANTIGO) —, pra
+    # já remapear a legenda pelos buracos que só vão existir DEPOIS desse PUT.
+    srt_segments, clip_text = resolve_clip_segments(clip, normalized)
 
     # Pan manual: remapeado só PRA ESSA renderização — o que fica salvo em
     # Clip.manual_pan_keyframes continua nas coordenadas originais (ver
@@ -164,25 +132,14 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
     # do pan manual acima. O valor SALVO continua em coordenadas pré-corte.
     render_mute_ranges = remap_mute_ranges(clip.get_mute_ranges(), normalized)
 
-    safe_rerender(
-        Path(video.filepath),
-        clip.start_time,
-        clip.end_time,
-        Path(clip.processed_path),
-        srt_path=srt_path,
-        cleanup_srt=True,
-        watermark_path=defaults.watermark_path,
-        watermark_position=defaults.watermark_position,
-        captions_enabled=defaults.captions_enabled,
-        caption_font_size=defaults.caption_font_size,
-        caption_color=defaults.caption_color,
-        caption_style=defaults.caption_style,
-        caption_font_family=defaults.caption_font_family,
-        streamer_region=defaults.streamer_region,
+    render_clip(
+        clip,
+        video,
+        job,
+        srt_segments=srt_segments,
         manual_pan_track=render_pan_track,
-        keep_segments=normalized,
+        cut_segments=normalized,
         mute_ranges=render_mute_ranges,
-        relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.set_cut_segments(normalized)

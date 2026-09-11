@@ -167,6 +167,12 @@ export interface UploadConfig {
   profanity_filter: ProfanityFilter;
 }
 
+// Status do download em background (ver POST /relaxing-videos, que retorna
+// na hora com status="downloading" — o worker Celery baixa via yt-dlp e
+// atualiza depois; GET /relaxing-videos/{id} é usado pelo frontend pra
+// fazer polling até "ready" ou "failed").
+export type RelaxingVideoStatus = "downloading" | "ready" | "failed";
+
 // Biblioteca de vídeos "relaxantes" de fundo (ver GET/POST/DELETE
 // /relaxing-videos no backend) — usados como fallback em vídeos de
 // narração pura (sem streamer, sem rosto rastreável).
@@ -175,4 +181,6 @@ export interface RelaxingVideoOut {
   title: string | null;
   duration: number | null;
   source_url: string | null;
+  status: RelaxingVideoStatus;
+  error_message: string | null;
 }

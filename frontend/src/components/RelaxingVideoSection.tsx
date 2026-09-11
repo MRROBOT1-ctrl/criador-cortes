@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
-import { addRelaxingVideo, deleteRelaxingVideo, listRelaxingVideos } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { addRelaxingVideo, deleteRelaxingVideo, getRelaxingVideo, listRelaxingVideos } from "../api";
 import type { RelaxingVideoOut } from "../types";
+
+// Intervalo do polling de status (ver POST /relaxing-videos, que retorna
+// antes do download terminar) — 3s é frequente o suficiente pra não parecer
+// travado, sem martelar o backend à toa.
+const POLL_INTERVAL_MS = 3000;
 
 interface Props {
   enabled: boolean;
@@ -34,17 +39,49 @@ export function RelaxingVideoSection({ enabled, onEnabledChange }: Props) {
       .catch(() => setVideos([]));
   }, [enabled, videos]);
 
+  // Polling de status pros vídeos ainda "downloading" (ver POST
+  // /relaxing-videos, que retorna antes do download terminar de verdade —
+  // o worker Celery baixa em background e atualiza o registro depois).
+  // `videosRef` deixa o intervalo sempre ler o estado MAIS RECENTE sem
+  // precisar recriar o setInterval a cada atualização de `videos` (senão o
+  // timer reiniciaria toda vez que um item mudasse de status, atrasando o
+  // polling dos outros que ainda estão pendentes).
+  const videosRef = useRef<RelaxingVideoOut[] | null>(null);
+  useEffect(() => {
+    videosRef.current = videos;
+  }, [videos]);
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const pending = (videosRef.current ?? []).filter((v) => v.status === "downloading");
+      for (const v of pending) {
+        try {
+          const updated = await getRelaxingVideo(v.id);
+          setVideos((current) => (current ?? []).map((item) => (item.id === updated.id ? updated : item)));
+        } catch {
+          // 404 — apagado enquanto baixava (por essa aba ou outra sessão).
+          // Some da lista local também: não faz sentido continuar mostrando
+          // "Baixando..." pra um item que não existe mais.
+          setVideos((current) => (current ?? []).filter((item) => item.id !== v.id));
+        }
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
+
   async function handleAdd() {
     const url = newUrl.trim();
     if (!url) return;
     setAdding(true);
     setError(null);
     try {
+      // Retorna na hora com status="downloading" — o polling acima assume
+      // a partir daqui e atualiza esse item quando o download terminar.
       const video = await addRelaxingVideo(url);
       setVideos((current) => [video, ...(current ?? [])]);
       setNewUrl("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao baixar esse vídeo.");
+      setError(err instanceof Error ? err.message : "Falha ao iniciar o download desse vídeo.");
     } finally {
       setAdding(false);
     }
@@ -102,21 +139,25 @@ export function RelaxingVideoSection({ enabled, onEnabledChange }: Props) {
           ) : (
             <ul className="flex flex-col gap-1">
               {videos.map((v) => (
-                <li
-                  key={v.id}
-                  className="flex items-center justify-between rounded bg-slate-800 px-2 py-1 text-xs text-slate-300"
-                >
-                  <span className="truncate">
-                    {v.title || v.id} ({formatDuration(v.duration)})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(v.id)}
-                    className="ml-2 shrink-0 text-slate-500 hover:text-red-400"
-                    aria-label="Remover"
-                  >
-                    ✕
-                  </button>
+                <li key={v.id} className="flex flex-col gap-0.5 rounded bg-slate-800 px-2 py-1 text-xs text-slate-300">
+                  <div className="flex items-center justify-between">
+                    <span className="truncate">
+                      {v.status === "downloading"
+                        ? "Baixando..."
+                        : `${v.title || v.id} (${formatDuration(v.duration)})`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(v.id)}
+                      className="ml-2 shrink-0 text-slate-500 hover:text-red-400"
+                      aria-label="Remover"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {v.status === "failed" && (
+                    <span className="text-red-400">{v.error_message || "Falha ao baixar esse vídeo."}</span>
+                  )}
                 </li>
               ))}
             </ul>
