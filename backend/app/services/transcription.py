@@ -37,10 +37,23 @@ def _get_model() -> WhisperModel:
 
 
 @dataclass
+class Word:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
 class Segment:
     start: float
     end: float
     text: str
+    # Timestamps por palavra dentro do segmento — usado só pelo filtro de
+    # palavrões (ver app/services/profanity.py), que precisa mutar/remover a
+    # palavra ofensiva sem afetar o resto da frase. Lista vazia em segmentos
+    # carregados de um transcript.json salvo ANTES dessa feature existir
+    # (retrocompatível — ver load_transcript_segments).
+    words: list[Word] = field(default_factory=list)
 
 
 @dataclass
@@ -51,7 +64,8 @@ class TranscriptionResult:
 
 
 def transcribe(audio_path: Path, language: str | None = None) -> TranscriptionResult:
-    """Transcreve o áudio e retorna os segmentos com timestamps.
+    """Transcreve o áudio e retorna os segmentos com timestamps (por segmento
+    E por palavra, ver Word acima).
 
     language=None deixa o Whisper autodetectar o idioma.
     """
@@ -61,6 +75,7 @@ def transcribe(audio_path: Path, language: str | None = None) -> TranscriptionRe
             str(audio_path),
             language=language,
             vad_filter=True,  # remove trechos de silêncio, melhora precisão dos timestamps
+            word_timestamps=True,  # necessário pro filtro de palavrões (app/services/profanity.py)
         )
         segments_iter = list(segments_iter)  # força a iteração aqui, dentro do try
     except ValueError:
@@ -77,7 +92,8 @@ def transcribe(audio_path: Path, language: str | None = None) -> TranscriptionRe
     full_text_parts: list[str] = []
     for seg in segments_iter:
         text = seg.text.strip()
-        segments.append(Segment(start=seg.start, end=seg.end, text=text))
+        words = [Word(start=w.start, end=w.end, text=w.word.strip()) for w in (seg.words or [])]
+        segments.append(Segment(start=seg.start, end=seg.end, text=text, words=words))
         full_text_parts.append(text)
 
     return TranscriptionResult(
@@ -85,6 +101,19 @@ def transcribe(audio_path: Path, language: str | None = None) -> TranscriptionRe
         full_text=" ".join(full_text_parts),
         segments=segments,
     )
+
+
+def segment_to_dict(seg: Segment) -> dict:
+    """Serializa um Segment (com as Words aninhadas) pra um dict 100% JSON-
+    serializável — usado ao persistir transcript.json (ver app/tasks/
+    pipeline.py). `seg.__dict__` sozinho não bastaria: `words` continuaria
+    sendo uma lista de dataclasses Word, não de dicts."""
+    return {
+        "start": seg.start,
+        "end": seg.end,
+        "text": seg.text,
+        "words": [{"start": w.start, "end": w.end, "text": w.text} for w in seg.words],
+    }
 
 
 def _format_srt_timestamp(seconds: float) -> str:
@@ -125,7 +154,17 @@ def load_transcript_segments(data_dir: Path) -> list[Segment]:
     if not transcript_path.exists():
         return []
     data = json.loads(transcript_path.read_text(encoding="utf-8"))
-    return [Segment(start=s["start"], end=s["end"], text=s["text"]) for s in data.get("segments", [])]
+    return [
+        Segment(
+            start=s["start"],
+            end=s["end"],
+            text=s["text"],
+            # .get() com default []: retrocompatível com transcript.json
+            # salvo antes de "words" existir (ver Segment.words acima).
+            words=[Word(start=w["start"], end=w["end"], text=w["text"]) for w in s.get("words", [])],
+        )
+        for s in data.get("segments", [])
+    ]
 
 
 def segments_overlapping(segments: list[Segment], start: float, end: float, min_overlap_ratio: float = 0.5) -> list[Segment]:

@@ -13,6 +13,7 @@ from app.schemas import (
     validate_caption_color,
     validate_caption_font_family,
     validate_caption_style,
+    validate_profanity_filter,
 )
 from app.tasks.pipeline import process_video
 
@@ -53,6 +54,13 @@ def _validate_caption_options(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _validate_profanity_filter(value: str) -> None:
+    try:
+        validate_profanity_filter(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _validate_clip_duration(clip_duration_min: int, clip_duration_max: int) -> None:
     """O formulário React já confere isso no cliente, mas uma chamada direta
     à API (curl, outro cliente) passava direto sem checagem nenhuma — o
@@ -84,6 +92,7 @@ async def upload_video(
     caption_style: str = Form(default="bold_outline"),
     caption_font_family: str = Form(default="DejaVu Sans"),
     use_relaxing_video_fallback: bool = Form(default=True),
+    profanity_filter: str = Form(default="off"),
     db: Session = Depends(get_db),
 ):
     ext = Path(file.filename or "").suffix.lower()
@@ -99,6 +108,7 @@ async def upload_video(
         )
     _validate_caption_options(caption_font_size, caption_color, caption_style, caption_font_family)
     _validate_clip_duration(clip_duration_min, clip_duration_max)
+    _validate_profanity_filter(profanity_filter)
 
     video = Video(filename=file.filename, filepath="", status="uploaded")
     db.add(video)
@@ -121,6 +131,7 @@ async def upload_video(
         caption_style=caption_style,
         caption_font_family=caption_font_family,
         use_relaxing_video_fallback=use_relaxing_video_fallback,
+        profanity_filter=profanity_filter,
     )
     db.add(job)
 
@@ -171,6 +182,7 @@ def upload_from_url(payload: UrlUploadRequest, db: Session = Depends(get_db)):
         payload.caption_font_size, payload.caption_color, payload.caption_style, payload.caption_font_family,
     )
     _validate_clip_duration(payload.clip_duration_min, payload.clip_duration_max)
+    _validate_profanity_filter(payload.profanity_filter)
 
     # filename/filepath ficam provisórios até o worker baixar o vídeo de
     # verdade e descobrir o título real (ver fase "downloading" do pipeline).
@@ -195,6 +207,7 @@ def upload_from_url(payload: UrlUploadRequest, db: Session = Depends(get_db)):
         caption_style=payload.caption_style,
         caption_font_family=payload.caption_font_family,
         use_relaxing_video_fallback=payload.use_relaxing_video_fallback,
+        profanity_filter=payload.profanity_filter,
     )
     db.add(job)
 

@@ -12,7 +12,6 @@ se existir, senão derivado do Whisper pro intervalo atual do clipe) e PUT
 valida + persiste + re-renderiza usando os helpers de
 app/services/clip_rendering.py.
 """
-import json
 import uuid
 from pathlib import Path
 
@@ -25,7 +24,7 @@ from app.database import get_db
 from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
-from app.services import hashtags
+from app.services import clip_rendering
 from app.services.clip_rendering import remap_clip_segments, remap_pan_track, resolve_job_render_defaults, safe_rerender
 from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
 
@@ -187,11 +186,16 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
         # manual que o usuário já tinha ajustado (ver app/routers/pan.py).
         manual_pan_track=render_pan_track,
         keep_segments=cut_segments,
+        # Nada aqui muda o intervalo do clipe nem os cortes internos — as
+        # janelas mutadas pelo filtro de palavrões (se houver) continuam
+        # válidas do jeito que estão, sem precisar remapear (ver clip_cuts.py
+        # pro caso em que os cortes internos MUDAM).
+        mute_ranges=clip.get_mute_ranges(),
         relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.transcript_text = clip_text
-    clip.hashtags = json.dumps(hashtags.generate_hashtags(clip_text), ensure_ascii=False)
+    clip.hashtags, clip.suggested_titles = clip_rendering.compute_clip_metadata(clip_text)
     db.commit()
     db.refresh(clip)
     return _clip_to_out(clip)

@@ -20,8 +20,8 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import Clip, Job, RelaxingVideo, Video
 from app.routers import watermark
-from app.services import audio_analysis, face_detection, hashtags, video_cutter, video_downloader
-from app.services.transcription import segments_overlapping, transcribe, write_srt
+from app.services import audio_analysis, clip_rendering, face_detection, profanity, video_cutter, video_downloader
+from app.services.transcription import Segment, segment_to_dict, segments_overlapping, transcribe, write_srt
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def process_video(self, job_id: str) -> None:
                 {
                     "language": transcription.language,
                     "full_text": transcription.full_text,
-                    "segments": [seg.__dict__ for seg in transcription.segments],
+                    "segments": [segment_to_dict(seg) for seg in transcription.segments],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -194,6 +194,11 @@ def process_video(self, job_id: str) -> None:
                 job.add_log("Nenhum vídeo relaxante cadastrado (POST /relaxing-videos) — trechos sem rosto usam o crop central padrão.")
         db.commit()
 
+        profanity_mode = job.profanity_filter or "off"
+        if profanity_mode != "off":
+            job.add_log(f"Filtro de palavrões ativo ('{profanity_mode}').")
+            db.commit()
+
         for i, candidate in enumerate(candidates):
             # Só inclui um segmento se pelo menos 50% da duração dele estiver
             # de fato dentro do intervalo do corte — evita vazar texto de
@@ -201,6 +206,54 @@ def process_video(self, job_id: str) -> None:
             # ficam consistentes entre si). Ver services/transcription.py —
             # mesma função reaproveitada pelo re-corte manual (routers/clips.py).
             clip_segments = segments_overlapping(transcription.segments, candidate.start, candidate.end)
+
+            # Filtro de palavrões (ver app/services/profanity.py) — best-effort,
+            # nunca derruba o job se algo der errado aqui (mesmo espírito da
+            # detecção de streamer acima).
+            keep_segments: list[tuple[float, float]] | None = None
+            mute_ranges: list[tuple[float, float]] | None = None
+            if profanity_mode != "off":
+                try:
+                    clip_duration = candidate.end - candidate.start
+                    spans_abs = profanity.merge_spans(
+                        profanity.find_profanity_spans_in_range(
+                            transcription.segments, candidate.start, candidate.end,
+                        )
+                    )
+                    if spans_abs:
+                        # Relativos ao início DESSE clipe — mesma convenção de
+                        # keep_segments/mute_ranges em video_cutter.py.
+                        spans_rel = [(s - candidate.start, e - candidate.start) for s, e in spans_abs]
+                        # Redige o TEXTO da legenda em qualquer um dos dois
+                        # modos — mesmo em "cut" o texto exibido não deveria
+                        # soletrar a palavra removida do áudio/vídeo.
+                        clip_segments = [
+                            Segment(start=seg.start, end=seg.end, text=profanity.redact_text(seg.text), words=seg.words)
+                            for seg in clip_segments
+                        ]
+                        if profanity_mode == "cut":
+                            keep_segments = []
+                            cursor = 0.0
+                            for s, e in spans_rel:
+                                if s > cursor:
+                                    keep_segments.append((cursor, s))
+                                cursor = max(cursor, e)
+                            if cursor < clip_duration:
+                                keep_segments.append((cursor, clip_duration))
+                            job.add_log(
+                                f"Corte {i + 1}: {len(spans_rel)} palavrão(ões) removido(s) do vídeo."
+                            )
+                        else:  # censor
+                            mute_ranges = spans_rel
+                            job.add_log(
+                                f"Corte {i + 1}: {len(spans_rel)} palavrão(ões) silenciado(s) + censurado(s) na legenda."
+                            )
+                        db.commit()
+                except Exception:  # noqa: BLE001 — filtro é um "extra", nunca deve derrubar o corte
+                    logger.exception("Falha no filtro de palavrões do corte %d (job %s) — seguindo sem ele.", i, job_id)
+                    keep_segments = None
+                    mute_ranges = None
+
             clip_text = " ".join(seg.text for seg in clip_segments).strip()
 
             clip_srt_path = data_dir / f"clip_{i}.srt"
@@ -223,8 +276,11 @@ def process_video(self, job_id: str) -> None:
                     if job.relaxing_video is not None and job.relaxing_video.filepath
                     else None
                 ),
+                keep_segments=keep_segments,
+                mute_ranges=mute_ranges,
             )
 
+            hashtags_json, titles_json = clip_rendering.compute_clip_metadata(clip_text)
             clip = Clip(
                 video_id=video.id,
                 job_id=job.id,
@@ -234,8 +290,13 @@ def process_video(self, job_id: str) -> None:
                 score=candidate.score,
                 processed_path=str(output_path),
                 transcript_text=clip_text,
-                hashtags=json.dumps(hashtags.generate_hashtags(clip_text), ensure_ascii=False),
+                hashtags=hashtags_json,
+                suggested_titles=titles_json,
             )
+            if keep_segments:
+                clip.set_cut_segments(keep_segments)
+            if mute_ranges:
+                clip.set_mute_ranges(mute_ranges)
             db.add(clip)
             job.progress = 70 + int(20 * (i + 1) / max(len(candidates), 1))
             job.add_log(f"Corte {i + 1}/{len(candidates)} pronto: {output_path.name}")

@@ -20,6 +20,17 @@ CAPTION_FONT_FAMILIES = {
 }
 CAPTION_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
+# Filtro de palavrões (ver app/services/profanity.py e Job.profanity_filter):
+# "off" nunca mexe em nada; "cut" remove o trecho da palavra do vídeo; "censor"
+# muta o áudio da palavra e troca por asteriscos na legenda.
+PROFANITY_MODES = {"off", "cut", "censor"}
+
+
+def validate_profanity_filter(value: str) -> str:
+    if value not in PROFANITY_MODES:
+        raise ValueError(f"profanity_filter inválido: '{value}'. Use: {', '.join(sorted(PROFANITY_MODES))}.")
+    return value
+
 
 def validate_caption_color(value: str) -> str:
     if not CAPTION_COLOR_RE.match(value):
@@ -72,6 +83,7 @@ class JobOut(BaseModel):
     caption_style: str
     caption_font_family: str
     use_relaxing_video_fallback: bool
+    profanity_filter: str
     created_at: datetime
     updated_at: datetime
 
@@ -110,6 +122,7 @@ class ClipOut(BaseModel):
     processed_path: str | None
     transcript_text: str | None
     hashtags: dict[str, list[str]] | None
+    suggested_titles: list[str] | None
     video_duration: float | None  # duração do vídeo ORIGINAL — usado pelo editor (limite da timeline)
     has_streamer_region: bool  # job usa layout de tela dividida — zoom manual (POST /clips/{id}/pan) não suportado junto
 
@@ -166,6 +179,9 @@ class UrlUploadRequest(BaseModel):
     # sem rosto rastreável) sempre cai pro crop central simples de sempre —
     # nunca tenta o vídeo relaxante de fundo (ver app/services/video_cutter.py).
     use_relaxing_video_fallback: bool = True
+    # Validado manualmente no router (mesmo padrão de watermark_position/
+    # caption_style acima) — ver validate_profanity_filter.
+    profanity_filter: str = "off"
 
 
 class WatermarkStatus(BaseModel):

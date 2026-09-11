@@ -16,6 +16,7 @@ interface Props {
 
 export function ClipCard({ clip, onEdit }: Props) {
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
+  const [copiedTitle, setCopiedTitle] = useState<string | null>(null);
   // Muda toda vez que o clipe volta atualizado da tela de edição (agora uma
   // tela separada, não mais um modal aqui dentro) — força o <video> a
   // recarregar o arquivo (mesma URL, conteúdo novo, o navegador cacheia por
@@ -37,6 +38,16 @@ export function ClipCard({ clip, onEdit }: Props) {
       await navigator.clipboard.writeText(tags.join(" "));
       setCopiedPlatform(platform);
       setTimeout(() => setCopiedPlatform((current) => (current === platform ? null : current)), 1500);
+    } catch {
+      // clipboard indisponível (ex: contexto não seguro) — ignora silenciosamente
+    }
+  }
+
+  async function copyTitle(title: string) {
+    try {
+      await navigator.clipboard.writeText(title);
+      setCopiedTitle(title);
+      setTimeout(() => setCopiedTitle((current) => (current === title ? null : current)), 1500);
     } catch {
       // clipboard indisponível (ex: contexto não seguro) — ignora silenciosamente
     }
@@ -67,6 +78,24 @@ export function ClipCard({ clip, onEdit }: Props) {
         <p className="max-h-24 overflow-auto rounded-lg bg-slate-950 p-2 text-xs text-slate-400">
           {clip.transcript_text}
         </p>
+      )}
+
+      {clip.suggested_titles && clip.suggested_titles.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-lg bg-slate-950 p-2">
+          <span className="text-xs font-semibold text-slate-300">Títulos sugeridos</span>
+          {clip.suggested_titles.map((title) => (
+            <div key={title} className="flex items-center justify-between gap-2">
+              <p className="text-xs text-slate-400">{title}</p>
+              <button
+                type="button"
+                onClick={() => copyTitle(title)}
+                className="shrink-0 text-xs font-medium text-indigo-400 hover:text-indigo-300"
+              >
+                {copiedTitle === title ? "Copiado!" : "Copiar"}
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
       {hashtagEntries.length > 0 && (

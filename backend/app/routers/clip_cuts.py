@@ -7,7 +7,6 @@ ser MANTIDOS; o restante vira um "buraco" removido e os pedaços que sobram
 são concatenados sem ele (ver app/services/video_cutter.py,
 `cut_and_render_vertical`/`keep_segments`/`remap_time_through_cuts`).
 """
-import json
 import uuid
 from pathlib import Path
 
@@ -20,8 +19,14 @@ from app.database import get_db
 from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
-from app.services import hashtags
-from app.services.clip_rendering import remap_clip_segments, remap_pan_track, resolve_job_render_defaults, safe_rerender
+from app.services import clip_rendering
+from app.services.clip_rendering import (
+    remap_clip_segments,
+    remap_mute_ranges,
+    remap_pan_track,
+    resolve_job_render_defaults,
+    safe_rerender,
+)
 from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
 
 router = APIRouter(tags=["clip_cuts"])
@@ -154,6 +159,11 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
     original_pan = clip.get_manual_pan_keyframes()
     render_pan_track = remap_pan_track(original_pan, normalized)
 
+    # Janelas mutadas pelo filtro de palavrões (se houver, ver Clip.mute_ranges)
+    # também precisam ser remapeadas pros novos buracos — mesma lógica/motivo
+    # do pan manual acima. O valor SALVO continua em coordenadas pré-corte.
+    render_mute_ranges = remap_mute_ranges(clip.get_mute_ranges(), normalized)
+
     safe_rerender(
         Path(video.filepath),
         clip.start_time,
@@ -171,12 +181,13 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
         streamer_region=defaults.streamer_region,
         manual_pan_track=render_pan_track,
         keep_segments=normalized,
+        mute_ranges=render_mute_ranges,
         relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.set_cut_segments(normalized)
     clip.transcript_text = clip_text
-    clip.hashtags = json.dumps(hashtags.generate_hashtags(clip_text), ensure_ascii=False)
+    clip.hashtags, clip.suggested_titles = clip_rendering.compute_clip_metadata(clip_text)
     db.commit()
     db.refresh(clip)
 

@@ -4,7 +4,6 @@ legenda (inclusive religá-la, trocar fonte/cor/formato, ou desligar de vez)
 sem precisar reprocessar o vídeo inteiro (transcrição, seleção de momentos
 etc. — só re-renderiza esse clipe específico com os novos parâmetros).
 """
-import json
 import uuid
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from app.schemas import (
     validate_caption_font_family,
     validate_caption_style,
 )
-from app.services import hashtags
+from app.services import clip_rendering
 from app.services.clip_rendering import (
     remap_clip_segments,
     remap_pan_track,
@@ -130,6 +129,11 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     manual_pan_track = None if time_changed else clip.get_manual_pan_keyframes()
     caption_override = None if time_changed else clip.get_caption_segments_override()
     cut_segments = None if time_changed else clip.get_cut_segments()
+    # Mesmo tratamento de cut_segments acima (ver Clip.mute_ranges): as
+    # janelas mutadas pelo filtro de palavrões (modo "censor") foram
+    # calculadas em cima do intervalo ANTIGO — mudar o intervalo invalida
+    # elas (o usuário pode reconfigurar rodando o filtro de novo, se quiser).
+    mute_ranges = None if time_changed else clip.get_mute_ranges()
 
     tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_recut_{uuid.uuid4().hex[:8]}.srt"
     srt_path = None
@@ -184,17 +188,19 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
         streamer_region=defaults.streamer_region,
         manual_pan_track=render_pan_track,
         keep_segments=cut_segments,
+        mute_ranges=mute_ranges,
         relaxing_video_path=defaults.relaxing_video_path,
     )
 
     clip.transcript_text = clip_text
-    clip.hashtags = json.dumps(hashtags.generate_hashtags(clip_text), ensure_ascii=False)
+    clip.hashtags, clip.suggested_titles = clip_rendering.compute_clip_metadata(clip_text)
     clip.start_time = start_time
     clip.end_time = end_time
     if time_changed:
         clip.set_manual_pan_keyframes(None)
         clip.set_caption_segments_override(None)
         clip.set_cut_segments(None)
+        clip.set_mute_ranges(None)
     db.commit()
     db.refresh(clip)
 

@@ -14,6 +14,11 @@ export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bott
 
 export type CaptionStyle = "bold_outline" | "boxed" | "minimal" | "no_outline";
 
+// Filtro de palavrões (ver app/services/profanity.py no backend) — "off"
+// nunca mexe em nada, "cut" remove o trecho da palavra do vídeo, "censor"
+// muta o áudio da palavra e troca por asteriscos na legenda.
+export type ProfanityFilter = "off" | "cut" | "censor";
+
 export type CaptionFontFamily =
   | "DejaVu Sans"
   | "DejaVu Serif"
@@ -42,6 +47,7 @@ export interface JobOut {
   caption_color: string;
   caption_style: CaptionStyle;
   caption_font_family: CaptionFontFamily;
+  profanity_filter: ProfanityFilter;
   created_at: string;
   updated_at: string;
 }
@@ -82,6 +88,7 @@ export interface ClipOut {
   processed_path: string | null;
   transcript_text: string | null;
   hashtags: HashtagsByPlatform | null;
+  suggested_titles: string[] | null;
   video_duration: number | null;
   has_streamer_region: boolean;
 }
@@ -157,6 +164,7 @@ export interface UploadConfig {
   caption_style: CaptionStyle;
   caption_font_family: CaptionFontFamily;
   use_relaxing_video_fallback: boolean;
+  profanity_filter: ProfanityFilter;
 }
 
 // Biblioteca de vídeos "relaxantes" de fundo (ver GET/POST/DELETE

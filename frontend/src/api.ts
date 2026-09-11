@@ -61,6 +61,7 @@ export async function uploadVideo(file: File, config: UploadConfig): Promise<Upl
   form.append("caption_style", config.caption_style);
   form.append("caption_font_family", config.caption_font_family);
   form.append("use_relaxing_video_fallback", String(config.use_relaxing_video_fallback));
+  form.append("profanity_filter", config.profanity_filter);
 
   const res = await fetch(`${API_URL}/upload`, { method: "POST", body: form });
   return handleJson<UploadResponse>(res);
@@ -87,6 +88,7 @@ export async function uploadVideoUrl(url: string, config: UploadConfig): Promise
       caption_style: config.caption_style,
       caption_font_family: config.caption_font_family,
       use_relaxing_video_fallback: config.use_relaxing_video_fallback,
+      profanity_filter: config.profanity_filter,
     }),
   });
   return handleJson<UploadResponse>(res);

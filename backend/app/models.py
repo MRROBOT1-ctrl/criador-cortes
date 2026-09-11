@@ -108,6 +108,14 @@ class Job(Base):
     use_relaxing_video_fallback = Column(Boolean, default=True)
     relaxing_video_id = Column(String, ForeignKey("relaxing_videos.id"), nullable=True)
 
+    # Filtro de palavrões (ver app/services/profanity.py) — "off" (padrão,
+    # nunca mexe em nada), "cut" (remove o trecho da palavra do vídeo, mesmo
+    # mecanismo de Clip.cut_segments) ou "censor" (muta o áudio da palavra +
+    # troca por asteriscos na legenda, ver Clip.mute_ranges). Decidido UMA vez
+    # pro job inteiro (mesmo espírito de streamer_region/relaxing_video) —
+    # um recut que muda o intervalo do clipe recalcula em cima do novo trecho.
+    profanity_filter = Column(String, default="off")
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -147,6 +155,17 @@ class Clip(Base):
     processed_path = Column(String, nullable=True)  # caminho do mp4 final (vertical + legenda)
     transcript_text = Column(Text, nullable=True)  # texto transcrito do trecho (p/ hashtags/UI)
     hashtags = Column(Text, nullable=True)  # JSON: {"tiktok": [...], "instagram_reels": [...], ...}
+    suggested_titles = Column(Text, nullable=True)  # JSON: ["título 1", "título 2", ...] — ver app/services/titles.py
+
+    # Janelas MUTADAS pelo filtro de palavrões no modo "censor" (ver
+    # app/services/profanity.py e Job.profanity_filter) — JSON: [[início,
+    # fim], ...] em segundos relativos ao início do CLIPE ATUAL (mesma
+    # convenção de cut_segments/manual_pan_keyframes). NULL = sem nada mutado
+    # (filtro desligado, modo "cut" em vez de "censor", ou nenhuma palavra
+    # ofensiva encontrada nesse trecho). Guardado em coordenadas PRÉ-corte-
+    # interno, igual manual_pan_keyframes — um PUT /cuts remapeia só NA HORA
+    # de renderizar (ver remap_mute_ranges em clip_rendering.py).
+    mute_ranges = Column(Text, nullable=True)
 
     # Rastro de pan MANUAL (ver app/services/video_cutter.py::_build_pan_crop_x_expr) —
     # JSON: [{"t": segundos_desde_o_inicio_do_clipe, "cx": fracao_0_a_1_da_largura_do_video_ORIGINAL}, ...].
@@ -216,6 +235,17 @@ class Clip(Base):
             return None
         try:
             return [(float(s), float(e)) for s, e in json.loads(self.cut_segments)]
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    def set_mute_ranges(self, ranges: list[tuple[float, float]] | None) -> None:
+        self.mute_ranges = json.dumps(ranges) if ranges else None
+
+    def get_mute_ranges(self) -> list[tuple[float, float]] | None:
+        if not self.mute_ranges:
+            return None
+        try:
+            return [(float(s), float(e)) for s, e in json.loads(self.mute_ranges)]
         except (ValueError, TypeError, json.JSONDecodeError):
             return None
 

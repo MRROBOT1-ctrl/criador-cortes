@@ -362,6 +362,7 @@ def cut_and_render_vertical(
     manual_pan_track: list[tuple[float, float]] | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
     relaxing_video_path: Path | None = None,
+    mute_ranges: list[tuple[float, float]] | None = None,
 ) -> None:
     """Corta o trecho [start, end] do vídeo e renderiza em 1080x1920 (9:16),
     30fps, com legenda queimada (se fornecida), marca d'água/logo (se
@@ -403,6 +404,13 @@ def cut_and_render_vertical(
     watermark) roda em cima do resultado já concatenado, sem saber que
     existiu um corte no meio. `None` ou um segmento cobrindo o clipe inteiro
     == comportamento de sempre (sem cortes internos).
+
+    `mute_ranges`: lista de (início, fim) em segundos relativos a `start`
+    (mesma convenção de `keep_segments`) que devem ficar SEM ÁUDIO no
+    resultado final — usado pelo filtro de palavrões no modo "censor" (ver
+    app/services/profanity.py). Diferente de `keep_segments`, não remove
+    nada do vídeo (a duração não muda) — só zera o volume naquela janela.
+    Ignorado se o vídeo não tiver faixa de áudio.
     """
     duration = end - start
     has_internal_cuts = not _is_noop_keep_segments(keep_segments, duration)
@@ -445,6 +453,12 @@ def cut_and_render_vertical(
     # função nem precisa saber que existiu um corte no meio.
     video_src = "0:v"
     audio_map = "0:a?"
+    # Calculado uma vez só, reaproveitado tanto pelo branch de cortes internos
+    # quanto pelo de mute_ranges logo abaixo — os dois precisam saber se
+    # existe faixa de áudio ANTES de referenciar "0:a"/"[acat]" num filtro
+    # (diferente do "?" de sempre em `-map`, um filtro quebra se o stream
+    # referenciado não existir).
+    has_audio = _has_audio_stream(video_path)
 
     if has_internal_cuts:
         # `-ss start` (mais abaixo, no comando) já reposiciona o timestamp 0
@@ -453,7 +467,6 @@ def cut_and_render_vertical(
         # DIRETO como start/end do `trim`/`atrim`, sem somar `start` de novo
         # (mesma convenção já usada pelo `manual_pan_track`/legenda no resto
         # do arquivo).
-        has_audio = _has_audio_stream(video_path)
         concat_inputs: list[str] = []
         for i, (seg_start, seg_end) in enumerate(keep_segments):
             stages.append(f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS[vcut{i}]")
@@ -468,6 +481,19 @@ def cut_and_render_vertical(
         else:
             stages.append(f"{''.join(concat_inputs)}concat=n={n}:v=1:a=0[vcat]")
         video_src = "vcat"
+
+    if mute_ranges and has_audio:
+        # `audio_map` já aponta pro que deve ser considerado "o áudio de
+        # entrada" nesse ponto — "0:a?" (sem cortes internos, precisa virar
+        # "[0:a]" pra ser um pad válido de filtergraph, sem o "?") ou "[acat]"
+        # (saída do concat acima, já sem os trechos removidos). `between(t,...)`
+        # usa o tempo JÁ relativo ao início do clipe (mesma convenção de
+        # `mute_ranges`/`keep_segments`), porque `-ss start` reposiciona t=0 pro
+        # início do trecho antes de qualquer filtro rodar.
+        audio_src_pad = audio_map if has_internal_cuts else "[0:a]"
+        enable_expr = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in mute_ranges)
+        stages.append(f"{audio_src_pad}volume=enable='{enable_expr}':volume=0[amuted]")
+        audio_map = "[amuted]"
 
     def _subtitles_filter() -> str:
         # ffmpeg exige escapar ':' no path do filtro subtitles no Linux

@@ -52,8 +52,15 @@ de engajamento pós-publicação.
   encontra uma webcam estável num canto do vídeo, monta layout de tela
   dividida (streamer em cima, gameplay embaixo) em vez do crop central.
   Best-effort: se não achar nada confiável, cai pro crop central de sempre.
-- ⏳ Fase 2 restante: zoom automático em quem fala, títulos/thumbnails
-  sugeridos, sentimento via modelo de texto.
+- ✅ Títulos sugestivos por corte (`backend/app/services/titles.py`) — mesmo
+  espírito das hashtags: template + palavra-chave da transcrição, editável
+  pelo usuário, não é geração via modelo de linguagem.
+- ✅ Filtro de palavrões por job (`backend/app/services/profanity.py`,
+  `Job.profanity_filter`): "cut" remove o trecho da palavra do vídeo,
+  "censor" muta o áudio da palavra + troca por asteriscos na legenda. Lista
+  fixa de palavras em PT-BR, best-effort (depende da transcrição do Whisper
+  ter acertado a palavra).
+- ⏳ Fase 2 restante: thumbnails sugeridas, sentimento via modelo de texto.
 
 ## Como rodar
 
@@ -183,8 +190,7 @@ celery -A app.celery_app worker --loglevel=info --concurrency=1
 
 ## Próximos passos
 
-1. Fase 2 restante: zoom automático em quem fala, títulos/thumbnails
-   sugeridos, sentimento via modelo de texto.
+1. Fase 2 restante: thumbnails sugeridas, sentimento via modelo de texto.
 2. Frontend: sem testes automatizados ainda (só verificação manual/`tsc`);
    considerar Vitest + Testing Library se o projeto crescer. CORS do backend
    está liberado geral (`allow_origins=["*"]`) — vale restringir ao domínio

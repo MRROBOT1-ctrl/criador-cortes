@@ -44,3 +44,32 @@
 - Agendamento para publicação direta no TikTok/Instagram
 - Suporte a múltiplos idiomas
 - Filtro de "palavrões" para cortar ou censurar
+
+---
+
+## Status de implementação (atualizado 2026-09-11)
+
+Anotação adicionada depois — o conteúdo acima é o spec original do DeepSeek e
+não foi alterado (ver README.md, seção "Como rodar", sobre esses arquivos
+`deepseek_*` ficarem como referência histórica).
+
+- ✅ **Geração de títulos sugestivos para cada corte** — implementado
+  (`backend/app/services/titles.py`). Mesmo espírito/limitação das hashtags
+  já existentes: template + palavra-chave extraída da transcrição, **não** é
+  geração via modelo de linguagem. Editável pelo usuário antes de publicar.
+- ✅ **Filtro de "palavrões" para cortar ou censurar** — implementado
+  (`backend/app/services/profanity.py`, `Job.profanity_filter`). Dois modos:
+  "cut" remove o trecho da palavra do vídeo (reaproveita o mecanismo de
+  cortes internos), "censor" muta só o áudio da palavra + troca por
+  asteriscos na legenda. Lista de palavras fixa (PT-BR), sem flexão
+  automática — best-effort, não pega tudo.
+- ❌ Detecção automática de capítulos/segmentos — não implementado
+- ❌ Thumbnail automática — não implementado
+- ❌ Agendamento para publicação direta no TikTok/Instagram — não
+  implementado (precisa de credenciais reais de app nas duas plataformas,
+  incluindo app review do TikTok — combinar antes de começar)
+- ⚠️ Suporte a múltiplos idiomas — a TRANSCRIÇÃO autodetecta o idioma
+  (Whisper), mas a interface em si só existe em português
+
+Ver README.md ("Status atual — MVP backend") para o checklist completo do
+resto do projeto.

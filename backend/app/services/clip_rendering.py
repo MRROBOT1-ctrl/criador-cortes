@@ -4,13 +4,14 @@ clipe já existente (recut de tempo, edição de legenda, pan manual, etc.) —
 extraído de app/routers/clips.py pra evitar duplicar a mesma lógica de
 "resolve os defaults do job" e "renderiza com segurança" em cada endpoint novo.
 """
+import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.models import Job
 from app.routers.watermark import find_watermark_file
-from app.services import video_cutter
+from app.services import hashtags, titles, video_cutter
 from app.services.transcription import Segment
 
 
@@ -106,6 +107,35 @@ def remap_clip_segments(
         remapped.append(Segment(start=new_start, end=new_end, text=seg.text))
         texts.append(seg.text)
     return remapped, " ".join(texts).strip()
+
+
+def compute_clip_metadata(text: str) -> tuple[str, str]:
+    """Recalcula hashtags + títulos sugeridos a partir do texto do trecho,
+    já como strings JSON prontas pra Clip.hashtags/Clip.suggested_titles —
+    centraliza isso num lugar só (era duplicado entre pipeline.py, recut_clip,
+    set_captions e set_cut_segments)."""
+    hashtags_json = json.dumps(hashtags.generate_hashtags(text), ensure_ascii=False)
+    titles_json = json.dumps(titles.generate_titles(text), ensure_ascii=False)
+    return hashtags_json, titles_json
+
+
+def remap_mute_ranges(
+    mute_ranges: list[tuple[float, float]] | None,
+    keep_segments: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """Mesmo espírito de remap_pan_track, mas pra INTERVALOS (não pontos) —
+    usado pro filtro de palavrões no modo "censor" (ver Clip.mute_ranges).
+    Um intervalo mutado que caia inteiramente dentro de um trecho removido
+    pelos cortes internos simplesmente desaparece (nada pra mutar ali, o
+    trecho nem existe mais no resultado final)."""
+    if mute_ranges is None or keep_segments is None:
+        return mute_ranges
+    remapped: list[tuple[float, float]] = []
+    for s, e in mute_ranges:
+        result = video_cutter.remap_range_through_cuts(s, e, keep_segments)
+        if result is not None:
+            remapped.append(result)
+    return remapped or None
 
 
 def remap_pan_track(

@@ -1,7 +1,14 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { uploadVideo, uploadVideoUrl } from "../api";
-import type { CaptionFontFamily, CaptionStyle, UploadConfig, UploadResponse, WatermarkPosition } from "../types";
+import type {
+  CaptionFontFamily,
+  CaptionStyle,
+  ProfanityFilter,
+  UploadConfig,
+  UploadResponse,
+  WatermarkPosition,
+} from "../types";
 import { CaptionSection } from "./CaptionSection";
 import { RelaxingVideoSection } from "./RelaxingVideoSection";
 import { WatermarkSection } from "./WatermarkSection";
@@ -31,6 +38,7 @@ export function UploadForm({ onUploaded }: Props) {
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("bold_outline");
   const [captionFontFamily, setCaptionFontFamily] = useState<CaptionFontFamily>("DejaVu Sans");
   const [useRelaxingVideoFallback, setUseRelaxingVideoFallback] = useState(true);
+  const [profanityFilter, setProfanityFilter] = useState<ProfanityFilter>("off");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,6 +65,7 @@ export function UploadForm({ onUploaded }: Props) {
       caption_style: captionStyle,
       caption_font_family: captionFontFamily,
       use_relaxing_video_fallback: useRelaxingVideoFallback,
+      profanity_filter: profanityFilter,
     };
 
     setSubmitting(true);
@@ -227,6 +236,26 @@ export function UploadForm({ onUploaded }: Props) {
           onChange={(e) => setKeywords(e.target.value)}
           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
         />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="profanity_filter" className="text-sm font-medium text-slate-300">
+          Filtro de palavrões
+        </label>
+        <select
+          id="profanity_filter"
+          value={profanityFilter}
+          onChange={(e) => setProfanityFilter(e.target.value as ProfanityFilter)}
+          className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100"
+        >
+          <option value="off">Desligado</option>
+          <option value="censor">Censurar (muta o áudio + *** na legenda)</option>
+          <option value="cut">Cortar (remove o trecho do vídeo)</option>
+        </select>
+        <span className="text-xs text-slate-500">
+          Best-effort por lista de palavras — não pega tudo, e depende da transcrição do
+          Whisper ter acertado a palavra.
+        </span>
       </div>
 
       <CaptionSection
