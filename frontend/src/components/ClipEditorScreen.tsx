@@ -6,6 +6,7 @@ import { CaptionTextEditor } from "./CaptionTextEditor";
 import { CutSegmentsEditor } from "./CutSegmentsEditor";
 import { ManualPanEditor } from "./ManualPanEditor";
 import { TimelineScrubber } from "./TimelineScrubber";
+import { Button, Card, cn, FOCUS_VISIBLE_RING, MOTION_SAFE_TRANSITION } from "./ui";
 
 // Folga (em segundos) mostrada de cada lado do corte atual na timeline —
 // dá espaço pra estender o clipe pra trás/frente sem precisar saber a
@@ -92,14 +93,52 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
 
   const sourceVideoRef = useRef<HTMLVideoElement>(null);
 
+  // Snapshot dos campos da aba "Corte & estilo" logo que o clipe é carregado
+  // (ou trocado) — base de comparação pra saber se há "mudanças não salvas"
+  // (Parte 5). Um ref (não state) de propósito: só precisa ser lido durante
+  // o render pra calcular `isDirty`, escrevê-lo não deve disparar outro
+  // render. Só essa aba entra aqui: as outras 3 (Zoom manual/Legenda/
+  // Remover trechos) já aplicam ação a ação com seus próprios botões, sem um
+  // estado combinado de "vários campos, um Aplicar só" pra rastrear.
+  const initialFormRef = useRef({
+    start: clip.start_time,
+    end: clip.end_time,
+    captionsEnabled,
+    captionFontSize,
+    captionColor,
+    captionStyle,
+    captionFontFamily,
+  });
+
   // Se o usuário reabrir a edição de um clipe diferente sem desmontar o
   // componente (ex: navegação futura entre clipes), os campos de tempo/
-  // estilo precisam refletir o NOVO clipe, não ficar presos no anterior.
+  // estilo precisam refletir o NOVO clipe, não ficar presos no anterior — e
+  // o snapshot de "limpo" precisa andar junto, senão o clipe novo nasceria
+  // marcado como "sujo" por comparação com o snapshot do clipe anterior.
   useEffect(() => {
     setStart(clip.start_time);
     setEnd(clip.end_time);
     setTab("corte");
+    initialFormRef.current = {
+      start: clip.start_time,
+      end: clip.end_time,
+      captionsEnabled,
+      captionFontSize,
+      captionColor,
+      captionStyle,
+      captionFontFamily,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip.id]);
+
+  const isDirty =
+    start !== initialFormRef.current.start ||
+    end !== initialFormRef.current.end ||
+    captionsEnabled !== initialFormRef.current.captionsEnabled ||
+    captionFontSize !== initialFormRef.current.captionFontSize ||
+    captionColor !== initialFormRef.current.captionColor ||
+    captionStyle !== initialFormRef.current.captionStyle ||
+    captionFontFamily !== initialFormRef.current.captionFontFamily;
 
   const windowStart = Math.max(0, clip.start_time - WINDOW_PADDING_SECONDS);
   const windowEnd =
@@ -107,13 +146,36 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
       ? Math.min(clip.video_duration, clip.end_time + WINDOW_PADDING_SECONDS)
       : clip.end_time + WINDOW_PADDING_SECONDS;
 
+  // Sai da tela de edição — se a aba "Corte & estilo" tem mudança não
+  // aplicada, confirma antes (window.confirm nativo: decisão explícita de
+  // manter a Parte 5 100% visual, sem introduzir um modal customizado novo).
+  //
+  // IMPORTANTE — por que não existe nenhum código de "descartar mudanças"
+  // aqui: `onBack` sobe pro App.tsx, que troca `stage` e desmonta esse
+  // componente inteiro (o `<main key={stage}>` de App.tsx força remontar a
+  // cada troca de estágio). Como nada foi de fato aplicado no backend, o
+  // `clip` prop não mudou — reabrir o editor desse mesmo clipe cria uma
+  // instância NOVA, lendo os valores originais direto do `clip`. O
+  // `isDirty`/`initialFormRef` daqui só existem pra avisar ANTES de sair
+  // (via este confirm) — não fazem parte de "restaurar" nada depois. Se um
+  // dia esse componente passar a ficar montado entre navegações (ex: um
+  // cache de abas), esse comportamento de "esquecer" a edição descartada
+  // deixa de ser automático e precisaria de um reset explícito aqui.
+  function requestBack() {
+    if (isDirty && !window.confirm("Você tem alterações não salvas em \"Corte & estilo\". Sair mesmo assim?")) {
+      return;
+    }
+    onBack();
+  }
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onBack();
+      if (e.key === "Escape") requestBack();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onBack]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDirty, onBack]);
 
   function seekSourceTo(time: number) {
     const video = sourceVideoRef.current;
@@ -140,6 +202,18 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
         caption_font_family: captionFontFamily,
       });
       onUpdated(updated);
+      // Aplicado com sucesso — os valores atuais viram o novo "limpo"
+      // (senão a barra continuaria acusando mudança não salva depois de já
+      // ter salvo).
+      initialFormRef.current = {
+        start,
+        end,
+        captionsEnabled,
+        captionFontSize,
+        captionColor,
+        captionStyle,
+        captionFontFamily,
+      };
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao aplicar as mudanças.");
     } finally {
@@ -152,25 +226,25 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
       <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-sm font-medium text-indigo-400 hover:text-indigo-300"
-        >
+        <Button variant="ghost" onClick={requestBack}>
           ← Voltar pros cortes
-        </button>
-        <h2 className="text-lg font-semibold text-slate-100">Editando corte #{clip.index + 1}</h2>
+        </Button>
+        <h2 className="text-xl font-semibold text-text">Editando corte #{clip.index + 1}</h2>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto rounded-lg border border-slate-700 bg-slate-800 p-1">
+      <div className="flex gap-1 overflow-x-auto rounded-lg border border-border-strong bg-surface-hover p-1">
         {TABS.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition ${
-              tab === t.id ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
+            className={cn(
+              "flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium",
+              MOTION_SAFE_TRANSITION,
+              FOCUS_VISIBLE_RING,
+              "active:brightness-90 motion-safe:active:scale-[0.98]",
+              tab === t.id ? "bg-accent text-white" : "text-text-muted hover:text-heading",
+            )}
           >
             {t.label}
           </button>
@@ -182,7 +256,7 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
           (nunca desmonta ao trocar de aba, só escondida via `hidden`) —
           senão `sourceVideoRef` ficaria nulo assim que o usuário saísse da
           aba "Corte", quebrando o zoom manual. */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-lg" hidden={tab !== "corte" && tab !== "pan"}>
+      <Card padding="md" hidden={tab !== "corte" && tab !== "pan"}>
         <div className="mx-auto w-full max-w-[280px]">
           {!sourcePreviewFailed ? (
             <video
@@ -194,19 +268,19 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
               onError={() => setSourcePreviewFailed(true)}
             />
           ) : (
-            <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-slate-950 p-2 text-center text-xs text-slate-500">
+            <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-bg p-2 text-center text-xs text-text-subtle">
               Prévia do vídeo original indisponível pra esse formato — os campos abaixo continuam
               funcionando normalmente.
             </div>
           )}
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-lg">
+      <Card padding="md">
         {tab === "corte" && (
           <div className="flex flex-col gap-5">
             <section className="flex flex-col gap-3">
-              <p className="text-sm font-medium text-slate-300">Ajustar o corte</p>
+              <p className="text-sm font-medium text-text-secondary">Ajustar o corte</p>
               <TimelineScrubber
                 windowStart={windowStart}
                 windowEnd={windowEnd}
@@ -224,22 +298,30 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
                   step="0.1"
                   value={start.toFixed(2)}
                   onChange={(e) => setStart(Number(e.target.value))}
-                  className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                  className={cn(
+                    "w-full rounded-md border border-border-strong bg-surface-hover px-2 py-1 text-xs text-text",
+                    MOTION_SAFE_TRANSITION,
+                    "outline-none focus:border-accent focus:[--tw-outline-style:solid] focus:outline-2 focus:outline-accent focus:outline-offset-2",
+                  )}
                   aria-label="Início (s)"
                 />
-                <span className="text-xs text-slate-500">até</span>
+                <span className="text-xs text-text-subtle">até</span>
                 <input
                   type="number"
                   step="0.1"
                   value={end.toFixed(2)}
                   onChange={(e) => setEnd(Number(e.target.value))}
-                  className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                  className={cn(
+                    "w-full rounded-md border border-border-strong bg-surface-hover px-2 py-1 text-xs text-text",
+                    MOTION_SAFE_TRANSITION,
+                    "outline-none focus:border-accent focus:[--tw-outline-style:solid] focus:outline-2 focus:outline-accent focus:outline-offset-2",
+                  )}
                   aria-label="Fim (s)"
                 />
               </div>
             </section>
 
-            <section className="flex flex-col gap-3 border-t border-slate-800 pt-5 sm:flex-row">
+            <section className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row">
               <div
                 className="relative mx-auto aspect-[9/16] overflow-hidden rounded-lg bg-black"
                 style={{ width: PREVIEW_WIDTH_PX }}
@@ -252,7 +334,7 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
                 )}
               </div>
               <div className="flex-1">
-                <p className="mb-2 text-xs text-slate-500">
+                <p className="mb-2 text-xs text-text-subtle">
                   Prévia aproximada (o resultado final é renderizado no servidor e pode variar um pouco).
                 </p>
                 <CaptionSection
@@ -271,21 +353,10 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
             </section>
 
             {error && (
-              <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
+              <div className="rounded-lg border border-danger-border bg-danger-bg/50 px-3 py-2 text-sm text-danger-text">
                 {error}
               </div>
             )}
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleApply}
-                disabled={applying}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {applying ? "Aplicando... (pode levar um tempinho)" : "Aplicar"}
-              </button>
-            </div>
           </div>
         )}
 
@@ -302,7 +373,33 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
         {tab === "legenda" && <CaptionTextEditor clip={clip} onApplied={onUpdated} />}
 
         {tab === "cortes" && <CutSegmentsEditor clip={clip} onApplied={onUpdated} />}
-      </div>
+      </Card>
+
+      {/* Barra de Aplicar fixa no rodapé (Parte 5) — só na aba "Corte &
+          estilo", a única que combina vários campos (tempo + legenda) sob
+          UM botão só. `sticky` (não `fixed`): fica dentro do fluxo normal
+          da coluna max-w-4xl, sem precisar recentralizar nada, e some
+          quando o conteúdo da aba é mais curto que a tela (não empurra pra
+          baixo à toa). O indicador de "alterações não salvas" reflete
+          `isDirty` — comparação com o snapshot tirado quando o clipe foi
+          carregado (ver `initialFormRef`), não um contador que soma toda
+          mudança. */}
+      {tab === "corte" && (
+        <div className="sticky bottom-0 z-10 -mx-4 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur motion-safe:transition-colors sm:mx-0 sm:rounded-xl sm:border">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-text-subtle">
+              {isDirty ? (
+                <span className="font-medium text-warning-hover">● Alterações não salvas</span>
+              ) : (
+                "Tudo aplicado"
+              )}
+            </span>
+            <Button loading={applying} onClick={handleApply}>
+              {applying ? "Aplicando... (pode levar um tempinho)" : "Aplicar"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,120 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/*
+ * Design tokens (Parte 1 da reforma visual) — Tailwind v4 é CSS-first, então
+ * os tokens vivem aqui em @theme (não em tailwind.config.js). Cada token
+ * abaixo vira automaticamente uma classe utilitária (--color-accent gera
+ * bg-accent/text-accent/border-accent/etc, --radius-lg gera rounded-lg...).
+ *
+ * IMPORTANTE: os valores foram extraídos 1:1 do que já estava espalhado
+ * pelo projeto (auditoria via grep antes de mexer) — a interface deve ficar
+ * VISUALMENTE IDÊNTICA depois dessa parte, só migrando de classes hardcoded
+ * (bg-slate-900, text-indigo-400 etc) pra essas classes semânticas. Trocar
+ * o visual do app inteiro (tema mais claro, outra cor de destaque etc.) no
+ * futuro vira só mexer nos valores aqui, num lugar só, em vez de
+ * grep+replace em 15 arquivos.
+ *
+ * Cada token aponta pra uma cor já embutida no Tailwind (var(--color-slate-900)
+ * etc., definidas em tailwindcss/theme.css) em vez de repetir o valor —
+ * garante que é EXATAMENTE a mesma cor, sem risco de transcrever errado.
+ *
+ * Foi preciso mais tokens do que o mínimo óbvio (bg/surface/border/text/
+ * accent/danger/success/warning) porque o projeto já usa bem mais nuance de
+ * tom do que isso sozinho cobre (ex: 5 tons de cinza só pro texto, 3 pro
+ * "perigo") — ver decisão registrada no relatório da Parte 1.
+ */
+@theme {
+  /* ===== Fundo / superfícies =====
+     bg: fundo da página + caixas mais internas aninhadas (ex: prévia de
+         transcrição, painel de logs).
+     surface: fundo de card.
+     surface-hover: fundo de CONTROLES (input, botão, badge, aba) em repouso
+         — E o hover de um card (mesmo tom, os dois papéis coincidem hoje).
+     surface-active: hover de um controle que já está em surface-hover;
+         também usado como fundo de botão secundário e do badge "pending".
+     surface-active-strong: hover mais escuro ainda (raro — só some botão/
+         checkbox específico). */
+  --color-bg: var(--color-slate-950);
+  --color-surface: var(--color-slate-900);
+  --color-surface-hover: var(--color-slate-800);
+  --color-surface-active: var(--color-slate-700);
+  --color-surface-active-strong: var(--color-slate-600);
+
+  /* ===== Bordas =====
+     border: borda padrão de card.
+     border-strong: borda de input; também o hover da borda de um card, e a
+         borda de checkboxes nativos. */
+  --color-border: var(--color-slate-800);
+  --color-border-strong: var(--color-slate-700);
+
+  /* ===== Texto =====
+     text: texto principal.
+     heading: leve variação — títulos e hover de texto secundário; também o
+         texto do badge "pending".
+     text-secondary: labels, subtítulos.
+     text-muted: texto apagado.
+     text-subtle: texto mais apagado ainda / placeholder (o mais comum dos
+         "apagados"). */
+  --color-text: var(--color-slate-100);
+  --color-heading: var(--color-slate-200);
+  --color-text-secondary: var(--color-slate-300);
+  --color-text-muted: var(--color-slate-400);
+  --color-text-subtle: var(--color-slate-500);
+
+  /* ===== Destaque (accent) ===== */
+  --color-accent: var(--color-indigo-600);
+  --color-accent-hover: var(--color-indigo-500);
+  --color-accent-text: var(--color-indigo-400);
+  --color-accent-text-hover: var(--color-indigo-300);
+  --color-accent-subtle-bg: var(--color-indigo-900); /* fundo do badge "processando" */
+  --color-accent-subtle-text: var(--color-indigo-200); /* texto do badge "processando" */
+
+  /* ===== Perigo (erros, remover) =====
+     danger-bg/border/text: a caixa de erro padrão (borda + fundo + texto).
+     danger-text-strong: texto/ícone de erro mais vivo (botões "remover" ao
+         passar o mouse, mensagens de erro sem caixa ao redor).
+     danger-subtle-bg/text: badge de status "failed". */
+  --color-danger-bg: var(--color-red-950);
+  --color-danger-border: var(--color-red-800);
+  --color-danger-text: var(--color-red-300);
+  --color-danger-text-strong: var(--color-red-400);
+  --color-danger-subtle-bg: var(--color-red-900);
+  --color-danger-subtle-text: var(--color-red-200);
+
+  /* ===== Sucesso ===== (só o badge de status "completed" usa, hoje) */
+  --color-success-subtle-bg: var(--color-emerald-900);
+  --color-success-subtle-text: var(--color-emerald-200);
+
+  /* ===== Aviso ===== (só o editor de zoom manual usa, hoje) */
+  --color-warning-marker: var(--color-amber-400);
+  --color-warning: var(--color-amber-600);
+  --color-warning-hover: var(--color-amber-500);
+
+  /* ===== Raio =====
+     Reafirma aqui os valores DEFAULT do Tailwind (--radius-sm/md/lg já
+     existem por baixo do pano) só pra deixar explícito que dá pra
+     sobrescrever num lugar só — os valores são os mesmos de sempre, então
+     rounded-md/rounded-lg no resto do projeto continuam idênticos. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+
+  /* ===== Sombra =====
+     card: a sombra que todo container (bg-surface) já usa hoje (shadow-lg).
+     modal: ainda sem uso (o editor virou tela cheia, não modal — ver commit
+     "Editor de clipe vira tela cheia separada"), mas já deixa pronta pra
+     quando precisar (ex: diálogo de confirmação da Parte 5). */
+  --shadow-card: var(--shadow-lg);
+  --shadow-modal: var(--shadow-xl);
+
+  /* ===== Tipografia =====
+     Inter self-hosted via @fontsource-variable (import no topo do arquivo)
+     — sem CDN nenhum (nem Google Fonts), o projeto roda 100% offline (ver
+     README, seção "Funciona offline?"). Fallback pra system-ui cobre o caso
+     raro da fonte falhar em carregar. */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
 
 /* Tema escuro fixo por padrão — requisito do spec, sem toggle claro/escuro. */
 :root {
@@ -12,7 +128,7 @@ body,
 }
 
 body {
-  @apply bg-slate-950 text-slate-100;
+  @apply bg-bg text-text font-sans;
 }
 
 /* Barra de rolagem discreta pro painel de logs */
@@ -20,6 +136,70 @@ body {
   width: 8px;
 }
 .log-scroll::-webkit-scrollbar-thumb {
-  background-color: #334155;
+  background-color: var(--color-border-strong);
   border-radius: 9999px;
+}
+
+/*
+ * Micro-animações (Parte 3, item 3b) — TODAS dentro de
+ * @media (prefers-reduced-motion: no-preference), de propósito: fora desse
+ * bloco as classes abaixo simplesmente NÃO EXISTEM pra quem pediu menos
+ * movimento, então o elemento renderiza direto no estado final (visível,
+ * sem transform) — não precisa de um segundo bloco "reduce" desligando nada,
+ * a ausência da regra já resolve.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes fade-slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  /* Troca de estágio no App.tsx (home -> upload -> progress -> clips) —
+     aplicada com `key={stage}` no wrapper, pra remontar (e reiniciar a
+     animação) a cada troca. */
+  .animate-stage-enter {
+    animation: fade-slide-up 300ms ease-out both;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  /* Lista de clipes carregando (ClipsList) — stagger por índice via
+     `animation-delay` inline (ver ClipCard). */
+  .animate-fade-in {
+    animation: fade-in 300ms ease-out both;
+  }
+
+  @keyframes toast-pulse {
+    0% {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    12% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    75% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  /* "Copiado!" do ClipCard — dura os mesmos 1.5s do setTimeout que volta
+     pro texto "Copiar", só que com entrada/saída suave em vez de trocar o
+     texto na hora. */
+  .animate-toast {
+    animation: toast-pulse 1.5s ease-out both;
+  }
 }

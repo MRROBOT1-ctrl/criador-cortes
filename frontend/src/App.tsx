@@ -6,6 +6,7 @@ import { HomeScreen } from "./components/HomeScreen";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { UploadForm } from "./components/UploadForm";
 import { useJobStatus } from "./hooks/useJobStatus";
+import { Button } from "./components/ui";
 import type { ClipOut, JobSummary, UploadResponse } from "./types";
 
 // Fluxo de uma tela só: home (lista de jobs) -> upload -> progresso -> resultado.
@@ -105,24 +106,23 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-10">
+    <div className="min-h-screen bg-bg px-4 py-10">
       <header className="mx-auto mb-8 max-w-6xl">
         {stage !== "home" && (
-          <button
-            type="button"
-            onClick={handleGoHome}
-            className="mb-3 text-sm font-medium text-indigo-400 hover:text-indigo-300"
-          >
+          <Button variant="ghost" className="mb-3" onClick={handleGoHome}>
             ← Meus cortes
-          </button>
+          </Button>
         )}
-        <h1 className="text-2xl font-bold text-slate-100">VideoCutterAI</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-2xl font-bold text-text">VideoCutterAI</h1>
+        <p className="mt-1 text-sm text-text-muted">
           Gere cortes verticais automáticos com legenda e hashtags a partir de um vídeo longo.
         </p>
       </header>
 
-      <main>
+      {/* `key={stage}` força remontar a cada troca de estágio — é isso que
+          reinicia a animação de entrada (fade + slide-up leve) toda vez,
+          em vez de rodar só na primeira montagem do app. */}
+      <main key={stage} className="animate-stage-enter">
         {stage === "home" && <HomeScreen onNewClip={() => setStage("upload")} onSelectJob={handleSelectJob} />}
 
         {stage === "upload" && <UploadForm onUploaded={handleUploaded} />}
@@ -132,19 +132,15 @@ export default function App() {
             {job ? (
               <ProgressPanel job={job} />
             ) : (
-              <p className="text-sm text-slate-400">Conectando ao status do job...</p>
+              <p className="text-sm text-text-muted">Conectando ao status do job...</p>
             )}
             {job?.status === "failed" && (
-              <button
-                type="button"
-                onClick={handleReset}
-                className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700"
-              >
+              <Button variant="secondary" onClick={handleReset}>
                 Tentar com outro vídeo
-              </button>
+              </Button>
             )}
             {clipsError && (
-              <div className="w-full max-w-xl rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
+              <div className="w-full max-w-xl rounded-lg border border-danger-border bg-danger-bg/50 px-3 py-2 text-sm text-danger-text">
                 {clipsError}
               </div>
             )}

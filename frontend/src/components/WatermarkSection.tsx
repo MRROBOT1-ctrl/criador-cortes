@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { deleteWatermark, getWatermarkStatus, uploadWatermark, watermarkPreviewUrl } from "../api";
 import type { WatermarkPosition } from "../types";
+import { Button, Select, buttonClasses } from "./ui";
 
 const POSITIONS: { value: WatermarkPosition; label: string }[] = [
   { value: "bottom-right", label: "Inferior direita" },
@@ -64,15 +65,15 @@ export function WatermarkSection({ enabled, position, onEnabledChange, onPositio
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-800/50 p-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-border-strong bg-surface-hover/50 p-3">
       <div className="flex items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-300">
+        <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
           <input
             type="checkbox"
             checked={enabled}
             disabled={!hasLogo}
             onChange={(e) => onEnabledChange(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-indigo-600"
+            className="h-4 w-4 rounded border-surface-active-strong bg-surface-hover accent-accent"
           />
           Aplicar marca d'água/logo nos clipes
         </label>
@@ -81,33 +82,27 @@ export function WatermarkSection({ enabled, position, onEnabledChange, onPositio
             key={previewKey}
             src={watermarkPreviewUrl()}
             alt="Prévia da logo"
-            className="h-8 w-auto rounded border border-slate-700 bg-slate-900 object-contain"
+            className="h-8 w-auto rounded border border-border-strong bg-surface object-contain"
           />
         )}
       </div>
 
       {enabled && (
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="watermark_position" className="text-xs font-medium text-slate-400">
-            Posição
-          </label>
-          <select
-            id="watermark_position"
-            value={position}
-            onChange={(e) => onPositionChange(e.target.value as WatermarkPosition)}
-            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100"
-          >
-            {POSITIONS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          id="watermark_position"
+          label="Posição"
+          options={POSITIONS}
+          value={position}
+          onChange={(e) => onPositionChange(e.target.value as WatermarkPosition)}
+        />
       )}
 
       <div className="flex items-center gap-2">
-        <label className="cursor-pointer rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600">
+        {/* <label> em vez de Button: precisa envolver o <input type="file">
+            escondido (pattern de "botão de upload" custom) — reaproveita as
+            mesmas classes via buttonClasses. Era bg-surface-active (um tom
+            mais escuro que "secondary"); consolidado, ver relatório da Parte 2. */}
+        <label className={buttonClasses("secondary", "sm", "cursor-pointer")}>
           {uploading ? "Enviando..." : hasLogo ? "Trocar logo" : "Enviar logo (PNG/JPG)"}
           <input
             type="file"
@@ -118,22 +113,18 @@ export function WatermarkSection({ enabled, position, onEnabledChange, onPositio
           />
         </label>
         {hasLogo && (
-          <button
-            type="button"
-            onClick={handleRemove}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/50"
-          >
+          <Button variant="danger" size="sm" onClick={handleRemove}>
             Remover
-          </button>
+          </Button>
         )}
       </div>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-text-subtle">
         A logo é única pra todos os vídeos processados aqui — troque quando quiser, mas ela vale
         pra qualquer job que marcar a caixa acima.
       </p>
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger-text-strong">{error}</p>}
     </div>
   );
 }

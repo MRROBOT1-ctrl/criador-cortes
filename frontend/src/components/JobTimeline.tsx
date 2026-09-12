@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { clipFileUrl, compileClips, compiledVideoUrl, reorderClips } from "../api";
 import type { ClipOut } from "../types";
+import { Button, buttonClasses, cn } from "./ui";
 
 interface Props {
   jobId: string;
@@ -94,16 +95,16 @@ export function JobTimeline({ jobId, clips, onReordered }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface/60 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-100">
+        <h3 className="text-sm font-semibold text-text">
           Timeline do job — arraste pra reordenar
         </h3>
-        {reordering && <span className="text-xs text-slate-400">Salvando ordem...</span>}
+        {reordering && <span className="text-xs text-text-muted">Salvando ordem...</span>}
       </div>
 
       {reorderError && (
-        <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-300">
+        <div className="rounded-lg border border-danger-border bg-danger-bg/50 px-3 py-2 text-xs text-danger-text">
           {reorderError}
         </div>
       )}
@@ -121,7 +122,7 @@ export function JobTimeline({ jobId, clips, onReordered }: Props) {
               onDrop={() => handleDrop(clip.id)}
               onDragEnd={() => setDragId(null)}
               className={`flex w-28 shrink-0 cursor-grab flex-col gap-1 rounded-lg border p-2 active:cursor-grabbing ${
-                isDragging ? "border-indigo-500 opacity-50" : "border-slate-700 bg-slate-950"
+                isDragging ? "border-accent-hover opacity-50" : "border-border-strong bg-bg"
               } ${isIncluded ? "" : "opacity-50"}`}
               title="Arraste para reordenar"
             >
@@ -130,7 +131,7 @@ export function JobTimeline({ jobId, clips, onReordered }: Props) {
                 muted
                 className="aspect-[9/16] w-full rounded bg-black object-cover"
               />
-              <div className="flex items-center justify-between gap-1 text-[11px] text-slate-300">
+              <div className="flex items-center justify-between gap-1 text-[11px] text-text-secondary">
                 <span>#{position + 1}</span>
                 <label className="flex items-center gap-1">
                   <input
@@ -148,20 +149,15 @@ export function JobTimeline({ jobId, clips, onReordered }: Props) {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={handleCompile}
-          disabled={compiling || includedCount === 0}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button loading={compiling} disabled={includedCount === 0} onClick={handleCompile}>
           {compiling ? "Gerando vídeo compilado..." : `Gerar vídeo compilado (${includedCount})`}
-        </button>
-        {compileError && <span className="text-xs text-red-400">{compileError}</span>}
+        </Button>
+        {compileError && <span className="text-xs text-danger-text-strong">{compileError}</span>}
       </div>
 
       {hasCompiled && (
-        <div className="flex flex-col gap-2 border-t border-slate-800 pt-3">
-          <span className="text-xs font-semibold text-slate-300">Vídeo compilado:</span>
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          <span className="text-xs font-semibold text-text-secondary">Vídeo compilado:</span>
           <video
             key={compiledVersion}
             src={`${compiledVideoUrl(jobId)}?v=${compiledVersion}`}
@@ -171,7 +167,7 @@ export function JobTimeline({ jobId, clips, onReordered }: Props) {
           <a
             href={`${compiledVideoUrl(jobId)}?v=${compiledVersion}`}
             download
-            className="self-start rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+            className={cn("self-start", buttonClasses("secondary", "sm"))}
           >
             Baixar compilado
           </a>

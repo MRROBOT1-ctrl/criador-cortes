@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { addRelaxingVideo, deleteRelaxingVideo, getRelaxingVideo, listRelaxingVideos } from "../api";
 import type { RelaxingVideoOut } from "../types";
+import { Button, cn, FOCUS_VISIBLE_RING, MOTION_SAFE_TRANSITION } from "./ui";
 
 // Intervalo do polling de status (ver POST /relaxing-videos, que retorna
 // antes do download terminar) — 3s é frequente o suficiente pra não parecer
@@ -98,48 +99,51 @@ export function RelaxingVideoSection({ enabled, onEnabledChange }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-slate-800 p-3">
-      <label className="flex items-center gap-2 text-sm font-medium text-slate-300">
+    <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
+      <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
         <input type="checkbox" checked={enabled} onChange={(e) => onEnabledChange(e.target.checked)} />
         Vídeo relaxante de fundo em trechos de narração
       </label>
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-text-subtle">
         Quando o vídeo não tem streamer nem ninguém rastreável (só narração), usa um vídeo de fundo tipo
         parkour/slime em vez do corte central vazio. Desmarcado = "sem janela", sempre corte central simples.
       </p>
 
       {enabled && (
-        <div className="flex flex-col gap-2 border-t border-slate-800 pt-3">
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
           <div className="flex gap-2">
+            {/* Input.tsx não é usado aqui de propósito: esse campo é menor
+                (px-2 py-1.5 text-xs) que o padrão do Input (px-3 py-2 text-sm)
+                — é uma variação de densidade pro widget compacto de
+                biblioteca, não uma cópia do padrão de formulário grande. */}
             <input
               type="url"
               placeholder="Link de um vídeo (YouTube etc.) pra adicionar à biblioteca"
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
-              className="flex-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-slate-100 placeholder:text-slate-500"
+              className={cn(
+                "flex-1 rounded-md border border-border-strong bg-surface-hover px-2 py-1.5 text-xs text-text placeholder:text-text-subtle",
+                MOTION_SAFE_TRANSITION,
+                "outline-none focus:border-accent focus:[--tw-outline-style:solid] focus:outline-2 focus:outline-accent focus:outline-offset-2",
+              )}
             />
-            <button
-              type="button"
-              onClick={handleAdd}
-              disabled={adding || !newUrl.trim()}
-              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
+            <Button size="sm" loading={adding} disabled={!newUrl.trim()} onClick={handleAdd}>
               {adding ? "Baixando..." : "Adicionar"}
-            </button>
+            </Button>
           </div>
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-danger-text-strong">{error}</p>}
 
           {videos === null ? (
-            <p className="text-xs text-slate-500">Carregando biblioteca...</p>
+            <p className="text-xs text-text-subtle">Carregando biblioteca...</p>
           ) : videos.length === 0 ? (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-text-subtle">
               Nenhum vídeo relaxante ainda — sem um na biblioteca, trechos de narração usam o corte central
               normal mesmo com isso marcado.
             </p>
           ) : (
             <ul className="flex flex-col gap-1">
               {videos.map((v) => (
-                <li key={v.id} className="flex flex-col gap-0.5 rounded bg-slate-800 px-2 py-1 text-xs text-slate-300">
+                <li key={v.id} className="flex flex-col gap-0.5 rounded bg-surface-hover px-2 py-1 text-xs text-text-secondary">
                   <div className="flex items-center justify-between">
                     <span className="truncate">
                       {v.status === "downloading"
@@ -149,14 +153,19 @@ export function RelaxingVideoSection({ enabled, onEnabledChange }: Props) {
                     <button
                       type="button"
                       onClick={() => handleDelete(v.id)}
-                      className="ml-2 shrink-0 text-slate-500 hover:text-red-400"
+                      className={cn(
+                        "ml-2 shrink-0 rounded text-text-subtle hover:text-danger-text-strong",
+                        MOTION_SAFE_TRANSITION,
+                        FOCUS_VISIBLE_RING,
+                        "active:brightness-90 motion-safe:active:scale-[0.98]",
+                      )}
                       aria-label="Remover"
                     >
                       ✕
                     </button>
                   </div>
                   {v.status === "failed" && (
-                    <span className="text-red-400">{v.error_message || "Falha ao baixar esse vídeo."}</span>
+                    <span className="text-danger-text-strong">{v.error_message || "Falha ao baixar esse vídeo."}</span>
                   )}
                 </li>
               ))}

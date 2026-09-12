@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { FOCUS_VISIBLE_RING, MOTION_SAFE_TRANSITION, cn } from "./ui";
 
 interface Props {
   windowStart: number; // segundos — limite esquerdo da janela mostrada
@@ -73,39 +74,57 @@ export function TimelineScrubber({ windowStart, windowEnd, start, end, onChange,
     <div className="flex flex-col gap-1">
       <div
         ref={trackRef}
-        className="relative h-9 w-full touch-none select-none rounded-md bg-slate-800"
+        className="relative h-9 w-full touch-none select-none rounded-md bg-surface-hover"
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
         {/* trechos fora do intervalo selecionado, escurecidos */}
-        <div className="absolute inset-0 rounded-md bg-slate-900/60" />
+        <div className="absolute inset-0 rounded-md bg-surface/60" />
         {/* faixa selecionada */}
         <div
-          className="absolute top-0 h-full bg-indigo-600/60"
+          className="absolute top-0 h-full bg-accent/60"
           style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
         />
-        {/* handle início */}
+        {/* handle início — tabIndex pra aparecer na navegação por teclado e
+            mostrar o anel de foco; arrastar continua só por pointer (mouse/
+            touch), não implementamos movimento via seta aqui. */}
         <div
           onPointerDown={handlePointerDown("start")}
-          className="absolute top-0 h-full w-3 -translate-x-1/2 cursor-ew-resize rounded-sm bg-indigo-300 shadow hover:bg-indigo-200"
+          tabIndex={0}
+          className={cn(
+            "absolute top-0 h-full w-3 -translate-x-1/2 cursor-ew-resize rounded-sm bg-accent-text-hover shadow hover:bg-accent-subtle-text",
+            MOTION_SAFE_TRANSITION,
+            FOCUS_VISIBLE_RING,
+          )}
           style={{ left: `${startPct}%` }}
           role="slider"
           aria-label="Início do corte"
+          aria-valuemin={windowStart}
+          aria-valuemax={end}
           aria-valuenow={start}
+          aria-valuetext={formatTime(start)}
         />
         {/* handle fim */}
         <div
           onPointerDown={handlePointerDown("end")}
-          className="absolute top-0 h-full w-3 -translate-x-1/2 cursor-ew-resize rounded-sm bg-indigo-300 shadow hover:bg-indigo-200"
+          tabIndex={0}
+          className={cn(
+            "absolute top-0 h-full w-3 -translate-x-1/2 cursor-ew-resize rounded-sm bg-accent-text-hover shadow hover:bg-accent-subtle-text",
+            MOTION_SAFE_TRANSITION,
+            FOCUS_VISIBLE_RING,
+          )}
           style={{ left: `${endPct}%` }}
           role="slider"
           aria-label="Fim do corte"
+          aria-valuemin={start}
+          aria-valuemax={windowEnd}
           aria-valuenow={end}
+          aria-valuetext={formatTime(end)}
         />
       </div>
-      <div className="flex justify-between text-[10px] text-slate-500">
+      <div className="flex justify-between text-[10px] text-text-subtle">
         <span>{formatTime(windowStart)}</span>
-        <span className="font-medium text-slate-300">
+        <span className="font-medium text-text-secondary">
           {formatTime(start)} → {formatTime(end)} ({(end - start).toFixed(1)}s)
         </span>
         <span>{formatTime(windowEnd)}</span>

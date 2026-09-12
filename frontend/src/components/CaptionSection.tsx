@@ -1,4 +1,5 @@
 import type { CaptionFontFamily, CaptionStyle } from "../types";
+import { Input, Select } from "./ui";
 
 const STYLES: { value: CaptionStyle; label: string }[] = [
   { value: "bold_outline", label: "Negrito sem caixa (padrão viral)" },
@@ -56,13 +57,13 @@ export function CaptionSection({
   onFontFamilyChange,
 }: Props) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-800/50 p-3">
-      <label className="flex items-center gap-2 text-sm font-medium text-slate-300">
+    <div className="flex flex-col gap-3 rounded-lg border border-border-strong bg-surface-hover/50 p-3">
+      <label className="flex items-center gap-2 text-sm font-medium text-text-secondary">
         <input
           type="checkbox"
           checked={captionsEnabled}
           onChange={(e) => onCaptionsEnabledChange(e.target.checked)}
-          className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-indigo-600"
+          className="h-4 w-4 rounded border-surface-active-strong bg-surface-hover accent-accent"
         />
         Queimar legenda no vídeo
       </label>
@@ -71,7 +72,7 @@ export function CaptionSection({
         <>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="caption_font_size" className="text-xs font-medium text-slate-400">
+              <label htmlFor="caption_font_size" className="text-xs font-medium text-text-muted">
                 Tamanho da fonte ({fontSize}px)
               </label>
               <input
@@ -81,60 +82,39 @@ export function CaptionSection({
                 max={FONT_SIZE_MAX}
                 value={fontSize}
                 onChange={(e) => onFontSizeChange(Number(e.target.value))}
-                className="accent-indigo-600"
+                className="accent-accent"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="caption_color" className="text-xs font-medium text-slate-400">
+              <label htmlFor="caption_color" className="text-xs font-medium text-text-muted">
                 Cor do texto
               </label>
-              <input
+              <Input
+                variant="color"
                 id="caption_color"
-                type="color"
                 value={color}
                 onChange={(e) => onColorChange(e.target.value)}
-                className="h-9 w-full cursor-pointer rounded-lg border border-slate-700 bg-slate-800 p-1"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="caption_style" className="text-xs font-medium text-slate-400">
-                Formato
-              </label>
-              <select
-                id="caption_style"
-                value={style}
-                onChange={(e) => onStyleChange(e.target.value as CaptionStyle)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100"
-              >
-                {STYLES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              id="caption_style"
+              label="Formato"
+              options={STYLES}
+              value={style}
+              onChange={(e) => onStyleChange(e.target.value as CaptionStyle)}
+            />
 
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="caption_font_family" className="text-xs font-medium text-slate-400">
-                Fonte
-              </label>
-              <select
-                id="caption_font_family"
-                value={fontFamily}
-                onChange={(e) => onFontFamilyChange(e.target.value as CaptionFontFamily)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100"
-              >
-                {FONT_FAMILIES.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              id="caption_font_family"
+              label="Fonte"
+              options={FONT_FAMILIES}
+              value={fontFamily}
+              onChange={(e) => onFontFamilyChange(e.target.value as CaptionFontFamily)}
+            />
           </div>
         </>
       )}

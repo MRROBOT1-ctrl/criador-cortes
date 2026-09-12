@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { listJobs } from "../api";
 import type { JobSummary, JobStatus } from "../types";
+import { Badge, Button, Card, EmptyState } from "./ui";
+import type { BadgeVariant } from "./ui";
 
 interface Props {
   onNewClip: () => void;
@@ -14,12 +16,37 @@ const STATUS_LABELS: Record<JobStatus, string> = {
   failed: "Falhou",
 };
 
-const STATUS_STYLES: Record<JobStatus, string> = {
-  pending: "bg-slate-700 text-slate-200",
-  running: "bg-indigo-900 text-indigo-200",
-  completed: "bg-emerald-900 text-emerald-200",
-  failed: "bg-red-900 text-red-200",
+// pending fica "neutral" (era um tom levemente diferente antes — bg-surface-
+// active/text-heading — consolidado aqui com o mesmo "neutral" do Badge;
+// diferença mínima e só nesse status transitório, ver relatório da Parte 2).
+const STATUS_VARIANTS: Record<JobStatus, BadgeVariant> = {
+  pending: "neutral",
+  running: "accent",
+  completed: "success",
+  failed: "danger",
 };
+
+// Skeleton pulse (Parte 3, item 3b) — mesma forma/grid dos cards de verdade,
+// só com barras cinzas pulsando no lugar do conteúdo, enquanto os jobs ainda
+// não chegaram da API. `motion-safe:animate-pulse` (built-in do Tailwind):
+// com prefers-reduced-motion, some o pulsar e fica só a forma estática — o
+// bastante pra indicar "carregando" sem depender de movimento.
+function HomeScreenSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <Card key={i} padding="sm" className="flex flex-col gap-3 motion-safe:animate-pulse">
+          <div className="flex items-start justify-between gap-2">
+            <div className="h-4 w-2/3 rounded bg-surface-hover" />
+            <div className="h-5 w-16 shrink-0 rounded-full bg-surface-hover" />
+          </div>
+          <div className="h-3 w-1/3 rounded bg-surface-hover" />
+          <div className="h-3 w-1/2 rounded bg-surface-hover" />
+        </Card>
+      ))}
+    </div>
+  );
+}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR", {
@@ -52,59 +79,53 @@ export function HomeScreen({ onNewClip, onSelectJob }: Props) {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-slate-100">Meus cortes</h2>
-        <button
-          type="button"
-          onClick={onNewClip}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-        >
-          + Novo corte
-        </button>
+        <h2 className="text-xl font-semibold text-text">Meus cortes</h2>
+        <Button onClick={onNewClip}>+ Novo corte</Button>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-sm text-red-300">
+        <div className="rounded-lg border border-danger-border bg-danger-bg/50 px-3 py-2 text-sm text-danger-text">
           {error}
         </div>
       )}
 
-      {!jobs && !error && <p className="text-sm text-slate-400">Carregando...</p>}
+      {!jobs && !error && <HomeScreenSkeleton />}
 
       {jobs && jobs.length === 0 && (
-        <p className="text-sm text-slate-400">
-          Nenhum corte gerado ainda. Clique em &quot;+ Novo corte&quot; para enviar seu primeiro vídeo.
-        </p>
+        <EmptyState
+          icon="🎬"
+          title="Nenhum corte gerado ainda"
+          description="Envie seu primeiro vídeo pra gerar cortes verticais automáticos com legenda e hashtags."
+          action={<Button onClick={onNewClip}>+ Novo corte</Button>}
+        />
       )}
 
       {jobs && jobs.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {jobs.map((job) => (
-            <button
+            <Card
               key={job.id}
-              type="button"
+              as="button"
+              padding="sm"
               onClick={() => onSelectJob(job)}
-              className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900 p-4 text-left shadow-lg transition hover:border-slate-700 hover:bg-slate-800"
+              className="flex flex-col gap-2 text-left hover:border-border-strong hover:bg-surface-hover"
             >
               <div className="flex items-start justify-between gap-2">
-                <span className="line-clamp-2 text-sm font-semibold text-slate-100">
+                <span className="line-clamp-2 text-sm font-semibold text-text">
                   {job.video_filename || "Vídeo sem nome"}
                 </span>
-                <span
-                  className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                    STATUS_STYLES[job.status] ?? STATUS_STYLES.pending
-                  }`}
-                >
+                <Badge variant={STATUS_VARIANTS[job.status] ?? "neutral"}>
                   {STATUS_LABELS[job.status] ?? job.status}
-                </span>
+                </Badge>
               </div>
-              <p className="text-xs text-slate-400">{formatDate(job.created_at)}</p>
-              <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+              <p className="text-xs text-text-muted">{formatDate(job.created_at)}</p>
+              <div className="mt-1 flex items-center justify-between text-xs text-text-subtle">
                 <span>
                   {job.clip_count} corte{job.clip_count === 1 ? "" : "s"}
                 </span>
                 {job.video_duration != null && <span>{Math.round(job.video_duration)}s de vídeo original</span>}
               </div>
-            </button>
+            </Card>
           ))}
         </div>
       )}

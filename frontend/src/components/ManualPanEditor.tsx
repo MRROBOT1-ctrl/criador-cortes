@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { RefObject } from "react";
 import { getClipPan, setClipPan } from "../api";
 import type { ClipOut, PanKeyframe } from "../types";
+import { Button, cn, FOCUS_VISIBLE_RING, MOTION_SAFE_TRANSITION } from "./ui";
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -88,7 +89,7 @@ export function ManualPanEditor({ clip, sourceVideoRef, sourcePreviewFailed, has
 
   if (hasStreamerRegion) {
     return (
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-text-subtle">
         Este job usa layout de tela dividida (streamer detectado) — zoom manual ainda não é suportado nesse caso.
       </p>
     );
@@ -96,7 +97,7 @@ export function ManualPanEditor({ clip, sourceVideoRef, sourcePreviewFailed, has
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-text-subtle">
         Clique no vídeo original acima pra marcar onde focar no instante atual da prévia, depois confirme abaixo.
         {isManual ? " (zoom manual ativo)" : " (usando detecção automática de rosto)"}
       </p>
@@ -104,12 +105,12 @@ export function ManualPanEditor({ clip, sourceVideoRef, sourcePreviewFailed, has
       {!sourcePreviewFailed && (
         <div
           onClick={handlePreviewClick}
-          className="relative h-6 w-full cursor-crosshair rounded-md border border-dashed border-slate-700 bg-slate-800/50"
+          className="relative h-6 w-full cursor-crosshair rounded-md border border-dashed border-border-strong bg-surface-hover/50"
           title="Clique pra marcar a posição horizontal de foco"
         >
           {pendingCx !== null && (
             <div
-              className="absolute top-0 h-full w-1 bg-amber-400"
+              className="absolute top-0 h-full w-1 bg-warning-marker"
               style={{ left: `${pendingCx * 100}%` }}
             />
           )}
@@ -119,23 +120,33 @@ export function ManualPanEditor({ clip, sourceVideoRef, sourcePreviewFailed, has
         <button
           type="button"
           onClick={confirmPendingPoint}
-          className="self-start rounded-md bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500"
+          className={cn(
+            "self-start rounded-md bg-warning px-2 py-1 text-xs font-medium text-white hover:bg-warning-hover",
+            MOTION_SAFE_TRANSITION,
+            FOCUS_VISIBLE_RING,
+            "active:brightness-90 motion-safe:active:scale-[0.98]",
+          )}
         >
           Confirmar ponto no tempo atual da prévia ({sourceVideoRef.current ? formatTime(sourceVideoRef.current.currentTime - clip.start_time) : "0:00"})
         </button>
       )}
 
       {!loading && keyframes.length > 0 && (
-        <ul className="flex flex-col gap-1 text-xs text-slate-300">
+        <ul className="flex flex-col gap-1 text-xs text-text-secondary">
           {keyframes.map((kf) => (
-            <li key={kf.t} className="flex items-center justify-between rounded bg-slate-800 px-2 py-1">
+            <li key={kf.t} className="flex items-center justify-between rounded bg-surface-hover px-2 py-1">
               <span>
                 {formatTime(kf.t)} → foco em {(kf.cx * 100).toFixed(0)}%
               </span>
               <button
                 type="button"
                 onClick={() => removeKeyframe(kf.t)}
-                className="text-slate-500 hover:text-red-400"
+                className={cn(
+                  "rounded text-text-subtle hover:text-danger-text-strong",
+                  MOTION_SAFE_TRANSITION,
+                  FOCUS_VISIBLE_RING,
+                  "active:brightness-90 motion-safe:active:scale-[0.98]",
+                )}
                 aria-label="Remover ponto"
               >
                 ✕
@@ -145,26 +156,16 @@ export function ManualPanEditor({ clip, sourceVideoRef, sourcePreviewFailed, has
         </ul>
       )}
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger-text-strong">{error}</p>}
 
       <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={applying || keyframes.length === 0}
-          onClick={() => save(keyframes)}
-          className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button size="sm" loading={applying} disabled={keyframes.length === 0} onClick={() => save(keyframes)}>
           {applying ? "Aplicando..." : "Aplicar zoom manual"}
-        </button>
+        </Button>
         {isManual && (
-          <button
-            type="button"
-            disabled={applying}
-            onClick={() => save([])}
-            className="rounded-md bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-          >
+          <Button variant="secondary" size="sm" disabled={applying} onClick={() => save([])}>
             Voltar pro automático
-          </button>
+          </Button>
         )}
       </div>
     </div>

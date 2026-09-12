@@ -2,6 +2,7 @@ import { downloadAllUrl } from "../api";
 import type { ClipOut } from "../types";
 import { ClipCard } from "./ClipCard";
 import { JobTimeline } from "./JobTimeline";
+import { Button, buttonClasses, EmptyState } from "./ui";
 
 interface Props {
   jobId: string;
@@ -15,36 +16,38 @@ export function ClipsList({ jobId, clips, onEditClip, onClipsReordered, onReset 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-slate-100">
+        <h2 className="text-xl font-semibold text-text">
           {clips.length} corte{clips.length === 1 ? "" : "s"} gerado{clips.length === 1 ? "" : "s"}
         </h2>
         <div className="flex gap-2">
-          <a
-            href={downloadAllUrl(jobId)}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-          >
+          <a href={downloadAllUrl(jobId)} className={buttonClasses("primary", "md")}>
             Baixar tudo (ZIP)
           </a>
-          <button
-            type="button"
-            onClick={onReset}
-            className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700"
-          >
+          <Button variant="secondary" onClick={onReset}>
             Novo vídeo
-          </button>
+          </Button>
         </div>
       </div>
 
       {clips.length === 0 ? (
-        <p className="text-sm text-slate-400">Nenhum clipe foi gerado para este vídeo.</p>
+        <EmptyState
+          icon="📭"
+          title="Nenhum clipe foi gerado para este vídeo"
+          description="O processamento terminou mas não achou nenhum trecho pra cortar — tente com outro vídeo."
+          action={
+            <Button variant="secondary" onClick={onReset}>
+              Novo vídeo
+            </Button>
+          }
+        />
       ) : (
         <>
           {clips.length > 1 && (
             <JobTimeline jobId={jobId} clips={clips} onReordered={onClipsReordered} />
           )}
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {clips.map((clip) => (
-              <ClipCard key={clip.id} clip={clip} onEdit={onEditClip} />
+            {clips.map((clip, index) => (
+              <ClipCard key={clip.id} clip={clip} onEdit={onEditClip} index={index} />
             ))}
           </div>
         </>

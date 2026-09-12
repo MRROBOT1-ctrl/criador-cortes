@@ -99,6 +99,37 @@ npm run dev             # http://localhost:5173
 Precisa do backend rodando (`docker compose up -d` na raiz, sem precisar
 subir o serviço `frontend` do compose nesse caso).
 
+### Design tokens (frontend)
+
+Tailwind v4 é CSS-first — os tokens de cor/raio/sombra do app ficam em
+`frontend/src/index.css`, dentro de um bloco `@theme` (não existe
+`tailwind.config.js`). Pra mudar a identidade visual (cor de destaque, tom
+de fundo etc.), basta editar os valores ali — cada `--color-X` já vira uma
+classe utilitária (`bg-X`, `text-X`, `border-X`...) usada nos componentes.
+
+Famílias de tokens disponíveis (ver comentários em `index.css` pra saber
+exatamente qual usar onde — tem mais nuance de tom do que os nomes sozinhos
+sugerem):
+
+- **Fundo/superfície**: `bg`, `surface`, `surface-hover`, `surface-active`,
+  `surface-active-strong`
+- **Borda**: `border`, `border-strong`
+- **Texto**: `text`, `heading`, `text-secondary`, `text-muted`, `text-subtle`
+- **Destaque (accent)**: `accent`, `accent-hover`, `accent-text`,
+  `accent-text-hover`, `accent-subtle-bg`, `accent-subtle-text`
+- **Perigo**: `danger-bg`, `danger-border`, `danger-text`,
+  `danger-text-strong`, `danger-subtle-bg`, `danger-subtle-text`
+- **Sucesso**: `success-subtle-bg`, `success-subtle-text`
+- **Aviso**: `warning-marker`, `warning`, `warning-hover`
+- **Raio**: `--radius-sm/md/lg` (mesmos valores default do Tailwind,
+  reafirmados aqui só pra dar um lugar explícito de override)
+- **Sombra**: `--shadow-card`, `--shadow-modal`
+
+Fonte: [Inter](https://fontsource.org/fonts/inter) self-hosted via
+`@fontsource-variable/inter` (pacote npm, arquivo `.woff2` embutido no
+bundle) — **sem CDN nenhum** (nem Google Fonts), mantendo o frontend 100%
+offline (ver seção "Funciona offline?").
+
 ## Endpoints principais
 
 | Método | Rota | Descrição |

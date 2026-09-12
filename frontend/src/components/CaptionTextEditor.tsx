@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getClipCaptions, setClipCaptions } from "../api";
 import type { CaptionLine, ClipOut } from "../types";
+import { Button, cn, MOTION_SAFE_TRANSITION } from "./ui";
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -80,58 +81,52 @@ export function CaptionTextEditor({ clip, onApplied }: Props) {
   }
 
   if (loading) {
-    return <p className="text-xs text-slate-500">Carregando legenda...</p>;
+    return <p className="text-xs text-text-subtle">Carregando legenda...</p>;
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-text-subtle">
         Corrija o texto que o Whisper transcreveu errado (o tempo de cada linha não muda).
         {isManual ? " (legenda editada manualmente)" : " (usando transcrição automática)"}
       </p>
 
       {lines.length === 0 && (
-        <p className="text-xs text-slate-500">Nenhuma linha de legenda encontrada para esse trecho.</p>
+        <p className="text-xs text-text-subtle">Nenhuma linha de legenda encontrada para esse trecho.</p>
       )}
 
       {lines.length > 0 && (
         <ul className="flex flex-col gap-2">
           {lines.map((line, i) => (
-            <li key={`${line.start}-${i}`} className="flex flex-col gap-1 rounded bg-slate-800 px-2 py-2">
-              <span className="text-[11px] text-slate-500">
+            <li key={`${line.start}-${i}`} className="flex flex-col gap-1 rounded bg-surface-hover px-2 py-2">
+              <span className="text-[11px] text-text-subtle">
                 {formatTime(line.start)} → {formatTime(line.end)}
               </span>
               <textarea
                 value={line.text}
                 onChange={(e) => updateText(i, e.target.value)}
                 rows={2}
-                className="w-full resize-none rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100"
+                className={cn(
+                  "w-full resize-none rounded-md border border-border-strong bg-surface px-2 py-1 text-xs text-text",
+                  MOTION_SAFE_TRANSITION,
+                  "outline-none focus:border-accent focus:[--tw-outline-style:solid] focus:outline-2 focus:outline-accent focus:outline-offset-2",
+                )}
               />
             </li>
           ))}
         </ul>
       )}
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger-text-strong">{error}</p>}
 
       <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={saving || lines.length === 0}
-          onClick={handleSave}
-          className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button size="sm" loading={saving} disabled={lines.length === 0} onClick={handleSave}>
           {saving ? "Salvando..." : "Salvar legendas"}
-        </button>
+        </Button>
         {isManual && (
-          <button
-            type="button"
-            disabled={saving}
-            onClick={handleRestore}
-            className="rounded-md bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-          >
+          <Button variant="secondary" size="sm" disabled={saving} onClick={handleRestore}>
             Restaurar transcrição original
-          </button>
+          </Button>
         )}
       </div>
     </div>

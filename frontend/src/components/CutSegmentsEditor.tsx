@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { getClipCuts, setClipCuts } from "../api";
 import type { ClipOut, CutSegment } from "../types";
+import { Button, cn, FOCUS_RING, FOCUS_VISIBLE_RING, MOTION_SAFE_TRANSITION } from "./ui";
+
+// Inputs pequenos (w-20) desse editor não usam o Input.tsx compartilhado —
+// são mais estreitos que o padrão dele (ver decisão registrada na Parte 2) —
+// mas ainda ganham os mesmos estados de foco/transição da Parte 3.
+const COMPACT_INPUT_STATES = cn(MOTION_SAFE_TRANSITION, FOCUS_RING, "focus:border-accent");
 
 interface RemovedRange {
   id: number; // chave estável pra lista do React — não usar índice (some/reordena ao excluir)
@@ -174,12 +180,12 @@ export function CutSegmentsEditor({ clip, onApplied }: Props) {
   }
 
   if (loading) {
-    return <p className="text-xs text-slate-500">Carregando cortes...</p>;
+    return <p className="text-xs text-text-subtle">Carregando cortes...</p>;
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-text-subtle">
         Marque trechos do MEIO do clipe pra remover (um silêncio, uma fala descartada) — o resultado final
         concatena o que sobrar, sem o buraco no meio.
         {isActive ? " (cortes internos ativos)" : " (nenhum corte interno configurado)"}
@@ -188,8 +194,8 @@ export function CutSegmentsEditor({ clip, onApplied }: Props) {
       {removed.length > 0 && (
         <ul className="flex flex-col gap-2">
           {removed.map((r) => (
-            <li key={r.id} className="flex items-center gap-2 rounded bg-slate-800 px-2 py-1.5">
-              <span className="text-xs text-slate-500">remover</span>
+            <li key={r.id} className="flex items-center gap-2 rounded bg-surface-hover px-2 py-1.5">
+              <span className="text-xs text-text-subtle">remover</span>
               <input
                 type="number"
                 step="0.1"
@@ -197,10 +203,10 @@ export function CutSegmentsEditor({ clip, onApplied }: Props) {
                 max={clipDuration}
                 value={r.start}
                 onChange={(e) => updateRange(r.id, "start", Number(e.target.value))}
-                className="w-20 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100"
+                className={cn("w-20 rounded-md border border-border-strong bg-surface px-2 py-1 text-xs text-text", COMPACT_INPUT_STATES)}
                 aria-label="Início do trecho removido (s)"
               />
-              <span className="text-xs text-slate-500">até</span>
+              <span className="text-xs text-text-subtle">até</span>
               <input
                 type="number"
                 step="0.1"
@@ -208,14 +214,19 @@ export function CutSegmentsEditor({ clip, onApplied }: Props) {
                 max={clipDuration}
                 value={r.end}
                 onChange={(e) => updateRange(r.id, "end", Number(e.target.value))}
-                className="w-20 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100"
+                className={cn("w-20 rounded-md border border-border-strong bg-surface px-2 py-1 text-xs text-text", COMPACT_INPUT_STATES)}
                 aria-label="Fim do trecho removido (s)"
               />
-              <span className="text-xs text-slate-500">s</span>
+              <span className="text-xs text-text-subtle">s</span>
               <button
                 type="button"
                 onClick={() => removeRange(r.id)}
-                className="ml-auto text-slate-500 hover:text-red-400"
+                className={cn(
+                  "ml-auto rounded text-text-subtle hover:text-danger-text-strong",
+                  MOTION_SAFE_TRANSITION,
+                  FOCUS_VISIBLE_RING,
+                  "active:brightness-90 motion-safe:active:scale-[0.98]",
+                )}
                 aria-label="Descartar este trecho removido"
               >
                 ✕
@@ -225,39 +236,29 @@ export function CutSegmentsEditor({ clip, onApplied }: Props) {
         </ul>
       )}
 
-      <button
-        type="button"
-        onClick={addRange}
-        disabled={applying}
-        className="self-start rounded-md bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-      >
+      <Button variant="secondary" size="sm" className="self-start" disabled={applying} onClick={addRange}>
         + remover um trecho
-      </button>
+      </Button>
 
-      <p className="text-xs text-slate-400">
-        <span className="font-medium text-slate-300">mantendo:</span> {keepPreview}
+      <p className="text-xs text-text-muted">
+        <span className="font-medium text-text-secondary">mantendo:</span> {keepPreview}
       </p>
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-danger-text-strong">{error}</p>}
 
       <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={applying || keepSegments.length === 0}
+        <Button
+          size="sm"
+          loading={applying}
+          disabled={keepSegments.length === 0}
           onClick={apply}
-          className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {applying ? "Aplicando..." : "Aplicar cortes"}
-        </button>
+        </Button>
         {isActive && (
-          <button
-            type="button"
-            disabled={applying}
-            onClick={clearCuts}
-            className="rounded-md bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-          >
+          <Button variant="secondary" size="sm" disabled={applying} onClick={clearCuts}>
             Remover todos os cortes internos
-          </button>
+          </Button>
         )}
       </div>
     </div>
