@@ -12,6 +12,7 @@ pydantic-settings==2.5.2
 # === Fila de processamento ===
 celery[redis]==5.4.0
 redis==5.0.8
+kombu==5.4.2  # fixa na mesma época do celery 5.4.0; evita o piso de redis-py 6.x que o kombu 5.7.0 exige
 
 # === Transcrição (Whisper otimizado para CPU) ===
 faster-whisper==1.0.3
