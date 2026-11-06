@@ -40,7 +40,7 @@ de engajamento pós-publicação.
   estilo Arial/Times/Courier) e 4 presets de formato (negrito sem caixa /
   caixa preta clássica / minimalista / sem contorno) por job — e por clipe
   individual, via a edição pós-processamento acima.
-- ✅ Editor visual por clipe (estilo CapCut, `ClipEditorModal.tsx`): timeline
+- ✅ Editor visual por clipe (estilo CapCut, `ClipEditorScreen.tsx`): timeline
   arrastável (início/fim) com prévia do vídeo ORIGINAL fazendo seek de
   verdade (`GET /jobs/{job_id}/original`, com suporte a `Range` de verdade —
   ver nota abaixo), + prévia ao vivo do estilo da legenda sobre o clipe já
@@ -207,7 +207,7 @@ frontend/                  # React + TypeScript (Vite, Tailwind dark-mode)
     api.ts                  # fetch nativo pro backend (VITE_API_URL)
     hooks/useJobStatus.ts   # WebSocket de status, cai pro polling se cair no meio do job
     components/             # HomeScreen, UploadForm, CaptionSection, WatermarkSection,
-                             # ProgressPanel, ClipsList, ClipCard, ClipEditorModal,
+                             # ProgressPanel, ClipsList, ClipCard, ClipEditorScreen,
                              # TimelineScrubber
   Dockerfile               # build com node, serve dist/ via nginx
 docker-compose.yml         # redis + backend (API) + worker + frontend (nginx)
@@ -224,7 +224,7 @@ Precisa de `ffmpeg` e `redis-server` instalados localmente.
 
 ```bash
 cd backend
-python3 -m venv venv && source venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # terminal 1
@@ -293,7 +293,7 @@ delas com frequência e uma versão antiga do yt-dlp quebra rápido.
 
 ## Nota sobre o editor visual e suporte a Range
 
-O editor (`ClipEditorModal.tsx`) faz o `<video>` do vídeo ORIGINAL fazer seek
+O editor (`ClipEditorScreen.tsx`) faz o `<video>` do vídeo ORIGINAL fazer seek
 de verdade pra qualquer ponto (não só do trecho já cortado), o que só é
 viável servindo o arquivo com suporte a `Range` — sem isso, cada busca no
 player baixaria o vídeo inteiro (alguns GB). **Bug real encontrado
