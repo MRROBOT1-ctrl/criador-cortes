@@ -17,6 +17,7 @@ backend/relaxing_videos/*
 __pycache__/
 *.pyc
 backend/venv/
+backend/.venv/
 
 # Node/frontend
 frontend/node_modules/

@@ -224,8 +224,8 @@ Precisa de `ffmpeg` e `redis-server` instalados localmente.
 
 ```bash
 cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv venv --python 3.12 && source .venv/bin/activate
+uv pip install -r requirements.txt
 
 # terminal 1
 uvicorn app.main:app --reload
