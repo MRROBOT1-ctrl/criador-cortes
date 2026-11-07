@@ -91,6 +91,111 @@ export interface ClipOut {
   suggested_titles: string[] | null;
   video_duration: number | null;
   has_streamer_region: boolean;
+  // Novos na Timeline de Revisão v1 (api-contract-timeline-v1.md §0.4).
+  // O backend antigo ainda não manda — o api.ts preenche com os defaults
+  // (ver normalizeClipOut) pra o resto do app poder confiar que existem.
+  caption_style: ClipCaptionStyle;
+  revision: number;
+}
+
+// ---------------------------------------------------------------------------
+// Timeline de Revisão v1 — tipos copiados do contrato (§9), com os MESMOS
+// nomes. Tempos sempre ABSOLUTOS (segundos no vídeo original): a conversão
+// pra relativo ao clipe é só do backend (spec §1.1).
+// ---------------------------------------------------------------------------
+
+export type CaptionPreset = "bold_outline" | "boxed" | "minimal" | "no_outline";
+
+export interface ClipCaptionStyle {
+  enabled: boolean;
+  font_size: number;
+  color: string; // "#RRGGBB"
+  preset: CaptionPreset;
+  font_family: string;
+}
+
+export interface TimeRange {
+  start: number;
+  end: number;
+}
+export interface CaptionLineAbs {
+  start: number;
+  end: number;
+  text: string;
+}
+export interface PanPointAbs {
+  t: number;
+  cx: number;
+}
+export interface ProfanityRange extends TimeRange {
+  kind: "muted" | "cut";
+}
+
+export interface ClipDraft {
+  clip_id: string;
+  job_id: string;
+  revision: number;
+  video_duration: number | null;
+  has_streamer_region: boolean;
+  range: TimeRange;
+  caption_style: ClipCaptionStyle;
+  captions: { mode: "auto" | "manual"; lines: CaptionLineAbs[] };
+  pan: PanPointAbs[];
+  removed: TimeRange[];
+  profanity: { mode: "off" | "cut" | "censor"; ranges: ProfanityRange[] };
+}
+
+export interface ClipEditIn {
+  revision: number;
+  range: TimeRange;
+  caption_style: ClipCaptionStyle;
+  captions: { mode: "auto" | "manual"; lines: CaptionLineAbs[] };
+  pan: PanPointAbs[];
+  removed: TimeRange[];
+  confirm_losses?: boolean;
+}
+
+export interface EditChange {
+  kind: "caption" | "pan" | "removed";
+  start: number;
+  end: number;
+  text?: string;
+  change?: string; // só em adjustments
+}
+
+export interface ClipEditOut {
+  status: "rendered" | "dry_run";
+  clip: ClipOut;
+  draft: ClipDraft;
+  adjustments: EditChange[];
+  render_seconds: number | null;
+}
+
+export interface ApiErrorDetail {
+  code: string;
+  message: string;
+  losses?: EditChange[];
+  current_revision?: number;
+  index?: number;
+  field?: string;
+  ffmpeg_tail?: string;
+}
+
+export interface WordOut {
+  start: number;
+  end: number;
+  text: string;
+  is_censored: boolean;
+}
+
+export interface WordsOut {
+  job_id: string;
+  language: string | null;
+  from: number;
+  to: number;
+  truncated: boolean;
+  censored: boolean;
+  words: WordOut[];
 }
 
 export interface MetricIn {
