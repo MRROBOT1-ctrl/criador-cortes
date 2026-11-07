@@ -25,6 +25,11 @@ frontend/dist/
 frontend/dist-ssr/
 *.local
 
+# Vídeos soltos (ex.: baixados com yt-dlp para teste) — passam fácil de GB
+# e nunca são código; os vídeos de uso já ficam nas pastas ignoradas acima.
+*.webm
+*.mp4
+
 # Editor/SO
 .vscode/*
 !.vscode/extensions.json
