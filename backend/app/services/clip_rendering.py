@@ -5,15 +5,25 @@ extraído de app/routers/clips.py pra evitar duplicar a mesma lógica de
 "resolve os defaults do job" e "renderiza com segurança" em cada endpoint novo.
 """
 import json
+import logging
+import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Clip, Job, Video
 from app.routers.watermark import find_watermark_file
 from app.services import hashtags, titles, video_cutter
+from app.services.caption_style import resolve_caption_style
 from app.services.transcription import Segment, load_transcript_segments, segments_overlapping, write_srt
+
+logger = logging.getLogger(__name__)
 
 # Sentinela usado só por render_clip() (ver `mute_ranges` lá embaixo) — existe
 # porque `None` já é um valor válido e com significado próprio pra alguns
@@ -22,6 +32,91 @@ from app.services.transcription import Segment, load_transcript_segments, segmen
 # de "o chamador passou None de propósito" — só um objeto que NINGUÉM passaria
 # por acidente resolve isso.
 _UNSET = object()
+
+
+# ---------------------------------------------------------------------------
+# Lock por clipe (contrato §0.5)
+#
+# Toda renderização de um clipe existente (PUT /edit, recut, cuts, pan,
+# captions) gera um arquivo NOVO e depois troca o processed_path no banco.
+# Duas renderizações do MESMO clipe ao mesmo tempo calculariam o mesmo nome
+# `_r{n+1}.mp4` e uma gravaria por cima do resultado da outra — por isso só
+# uma por clipe de cada vez. `acquire` NÃO bloqueante: quem chega depois
+# recebe 409 na hora em vez de ficar esperando um ffmpeg de 10-40s.
+# Em memória porque a API roda num processo só; se um dia houver vários, o
+# compare-and-swap do /edit (WHERE revision = ?) continua protegendo o banco.
+# ---------------------------------------------------------------------------
+
+RENDER_IN_PROGRESS_MESSAGE = "Outra edição deste corte está renderizando. Tente de novo em alguns segundos."
+
+_busy_clips: set[str] = set()
+_busy_guard = threading.Lock()
+
+
+class RenderInProgressError(HTTPException):
+    """409 render_in_progress já no envelope novo — subclasse de HTTPException
+    pra que os endpoints antigos (que continuam com erros {"detail": "texto"})
+    não precisem traduzir nada: basta deixar a exceção subir."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=409,
+            detail={"code": "render_in_progress", "message": RENDER_IN_PROGRESS_MESSAGE},
+        )
+
+
+@contextmanager
+def clip_render_lock(clip_id: str) -> Iterator[None]:
+    """Segura o lock do clipe durante o bloco; levanta RenderInProgressError
+    se outra renderização do mesmo clipe já estiver rodando. Liberado no
+    `finally`, inclusive quando o render falha."""
+    with _busy_guard:
+        if clip_id in _busy_clips:
+            raise RenderInProgressError()
+        _busy_clips.add(clip_id)
+    try:
+        yield
+    finally:
+        with _busy_guard:
+            _busy_clips.discard(clip_id)
+
+
+def next_render_path(clip: Clip) -> Path:
+    """Arquivo da PRÓXIMA versão do clipe: `clip_{index}_r{revision+1}.mp4`,
+    na mesma pasta do atual (contrato §0.5). O arquivo atual nunca é
+    sobrescrito: só depois do commit o processed_path passa a apontar pro
+    novo, então uma falha no meio deixa o clipe anterior intacto e válido."""
+    return Path(clip.processed_path).parent / f"clip_{clip.index}_r{(clip.revision or 0) + 1}.mp4"
+
+
+def discard_old_render(old_path: str | None, new_path: Path) -> None:
+    """Apaga o arquivo anterior depois do commit (best-effort: se falhar, só
+    sobra um arquivo órfão, o banco já aponta pro novo)."""
+    if not old_path or Path(old_path) == new_path:
+        return
+    try:
+        Path(old_path).unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Não consegui apagar o render anterior %s — fica órfão.", old_path, exc_info=True)
+
+
+def commit_render(db: Session, clip: Clip, new_path: Path) -> None:
+    """Fecha uma renderização dos endpoints ANTIGOS (pan, captions, cuts):
+    aponta processed_path pro arquivo novo, faz `revision += 1` (sem isso
+    eles passariam por baixo do compare-and-swap do /edit) e commita junto
+    com o que o router já alterou no `clip`. Se o commit falhar: rollback,
+    apaga o arquivo novo e relança — o banco continua no arquivo antigo, que
+    ainda existe. Precisa rodar DENTRO do clip_render_lock."""
+    old_path = clip.processed_path
+    clip.processed_path = str(new_path)
+    clip.revision = (clip.revision or 0) + 1
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        new_path.unlink(missing_ok=True)
+        raise
+    discard_old_render(old_path, new_path)
 
 
 @dataclass
@@ -224,19 +319,17 @@ def safe_rerender(
     cleanup_srt: bool = False,
     **cutter_kwargs,
 ) -> None:
-    """Renderiza num arquivo temporário e só substitui `output_path` se o
+    """Renderiza num arquivo temporário e só move pra `output_path` se o
     ffmpeg terminar com sucesso — uma falha no meio do encode (disco cheio,
-    processo morto) não deve sobrescrever o clipe anterior (que funcionava)
-    com um arquivo truncado/corrompido. `cleanup_srt=True` apaga o .srt
-    temporário depois (usado quando o chamador gerou um só pra essa
-    renderização, não um arquivo persistente).
+    processo morto) não deixa um arquivo truncado/corrompido com o nome
+    final. `cleanup_srt=True` apaga o .srt temporário depois (usado quando o
+    chamador gerou um só pra essa renderização, não um arquivo persistente).
 
-    O nome do tmp inclui um token aleatório — não é uma trava de verdade
-    contra duas edições concorrentes no MESMO clipe (ex: PUT /pan e PUT
-    /captions ao mesmo tempo ainda podem fazer uma sobrescrever o resultado
-    da outra na troca atômica final), mas evita o caso mais bobo de dois
-    renders concorrentes lerem/escreverem o MESMO arquivo temporário
-    enquanto ainda estão rodando."""
+    Desde a Timeline de Revisão v1, `output_path` é sempre um arquivo NOVO
+    (`clip_{index}_r{n+1}.mp4`, ver next_render_path) e a concorrência no
+    mesmo clipe é barrada antes, pelo clip_render_lock. O token aleatório no
+    nome do tmp continua: custa nada e evita colisão se algum chamador futuro
+    renderizar fora do lock."""
     tmp_path = output_path.with_suffix(f".{uuid.uuid4().hex[:8]}.recut_tmp.mp4")
     try:
         video_cutter.cut_and_render_vertical(
@@ -267,12 +360,26 @@ def render_clip(
     manual_pan_track: list[tuple[float, float]] | None = None,
     cut_segments: list[tuple[float, float]] | None = None,
     mute_ranges: list[tuple[float, float]] | None | object = _UNSET,
-) -> None:
+) -> Path:
     """Centraliza a chamada de safe_rerender aplicando os defaults do JOB
     (via resolve_job_render_defaults) pra tudo que não foi explicitamente
     sobrescrito por parâmetro — cada router só passa o que É diferente do
     default, em vez de repetir os mesmos ~12 kwargs toda vez (eram idênticos
     em captions.py, clip_cuts.py, clips.py e pan.py).
+
+    Renderiza num arquivo NOVO (`next_render_path`, `clip_{index}_r{n+1}.mp4`)
+    e devolve o caminho dele — não mexe no processed_path nem no banco. Quem
+    chama grava e commita (commit_render nos endpoints antigos, o
+    compare-and-swap em app/services/clip_edit.py no /edit e no recut) e só
+    então o arquivo antigo é apagado. Precisa rodar DENTRO do
+    clip_render_lock, com `clip.revision` atualizado (senão o nome do
+    arquivo novo pode coincidir com o de outra renderização).
+
+    Estilo da legenda: cada parâmetro `caption_*`/`captions_enabled` omitido
+    cai no estilo EFETIVO do CLIPE (resolve_caption_style: Clip > Job >
+    default), não mais só no do Job — sem isso, mexer no zoom depois de
+    trocar a cor do clipe voltava silenciosamente à cor do Job (spec §2.1,
+    métrica #5).
 
     `start_time`/`end_time`: default pro intervalo ATUAL do clipe
     (clip.start_time/clip.end_time) — só recut_clip passa um intervalo NOVO
@@ -308,10 +415,12 @@ def render_clip(
     correspondente em app/routers/pan.py.
     """
     defaults = resolve_job_render_defaults(job)
+    clip_style = resolve_caption_style(clip, job)
     render_start = start_time if start_time is not None else clip.start_time
     render_end = end_time if end_time is not None else clip.end_time
     effective_mute_ranges = clip.get_mute_ranges() if mute_ranges is _UNSET else mute_ranges
-    resolved_captions_enabled = captions_enabled if captions_enabled is not None else defaults.captions_enabled
+    resolved_captions_enabled = captions_enabled if captions_enabled is not None else clip_style.enabled
+    output_path = next_render_path(clip)
 
     tmp_srt_path = settings.data_dir / clip.job_id / f"clip_{clip.index}_rerender_{uuid.uuid4().hex[:8]}.srt"
     srt_path = None
@@ -323,19 +432,20 @@ def render_clip(
         Path(video.filepath),
         render_start,
         render_end,
-        Path(clip.processed_path),
+        output_path,
         srt_path=srt_path,
         cleanup_srt=True,
         watermark_path=defaults.watermark_path,
         watermark_position=defaults.watermark_position,
         captions_enabled=resolved_captions_enabled,
-        caption_font_size=caption_font_size if caption_font_size is not None else defaults.caption_font_size,
-        caption_color=caption_color if caption_color is not None else defaults.caption_color,
-        caption_style=caption_style if caption_style is not None else defaults.caption_style,
-        caption_font_family=caption_font_family if caption_font_family is not None else defaults.caption_font_family,
+        caption_font_size=caption_font_size if caption_font_size is not None else clip_style.font_size,
+        caption_color=caption_color if caption_color is not None else clip_style.color,
+        caption_style=caption_style if caption_style is not None else clip_style.preset,
+        caption_font_family=caption_font_family if caption_font_family is not None else clip_style.font_family,
         streamer_region=defaults.streamer_region,
         manual_pan_track=manual_pan_track,
         keep_segments=cut_segments,
         mute_ranges=effective_mute_ranges,
         relaxing_video_path=defaults.relaxing_video_path,
     )
+    return output_path

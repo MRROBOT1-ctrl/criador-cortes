@@ -18,7 +18,14 @@ from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
 from app.services import clip_rendering
-from app.services.clip_rendering import remap_mute_ranges, remap_pan_track, render_clip, resolve_clip_segments
+from app.services.clip_rendering import (
+    clip_render_lock,
+    commit_render,
+    remap_mute_ranges,
+    remap_pan_track,
+    render_clip,
+    resolve_clip_segments,
+)
 
 router = APIRouter(tags=["clip_cuts"])
 
@@ -96,6 +103,17 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
     if clip is None:
         raise HTTPException(status_code=404, detail="Clipe não encontrado.")
 
+    # Lock por clipe (contrato §0.5): segurado durante validação + render +
+    # gravação, com o clipe relido logo depois de adquirido (outra
+    # renderização pode ter acabado de gravar). Ocupado = 409
+    # render_in_progress no envelope novo; os demais erros continuam no
+    # formato antigo.
+    with clip_render_lock(clip.id):
+        db.refresh(clip)
+        return _set_cuts_locked(clip, payload, db)
+
+
+def _set_cuts_locked(clip: Clip, payload: CutSegmentsIn, db: Session) -> ClipOut:
     video = db.get(Video, clip.video_id)
     if video is None or not video.filepath or not Path(video.filepath).exists():
         raise HTTPException(status_code=404, detail="Vídeo original não encontrado.")
@@ -132,7 +150,7 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
     # do pan manual acima. O valor SALVO continua em coordenadas pré-corte.
     render_mute_ranges = remap_mute_ranges(clip.get_mute_ranges(), normalized)
 
-    render_clip(
+    new_path = render_clip(
         clip,
         video,
         job,
@@ -143,9 +161,18 @@ def set_cut_segments(clip_id: str, payload: CutSegmentsIn, db: Session = Depends
     )
 
     clip.set_cut_segments(normalized)
+    # Zera os removidos "do usuário" da Timeline de Revisão (contrato §7.5):
+    # aqui o usuário define os trechos MANTIDOS direto, misturando os buracos
+    # dele com os do filtro de palavrões. Com a coluna NULL, o GET /draft
+    # volta a derivar `removed` dos buracos de cut_segments (contrato §2.4) —
+    # se ela ficasse com o valor antigo, o /draft mostraria remoções que este
+    # PUT acabou de desfazer.
+    clip.set_manual_removed_ranges(None)
     clip.transcript_text = clip_text
     clip.hashtags, clip.suggested_titles = clip_rendering.compute_clip_metadata(clip_text)
-    db.commit()
+    # Arquivo novo `_r{n+1}.mp4` (render_clip não toca no atual) +
+    # revision += 1 + commit; o antigo só é apagado depois do commit.
+    commit_render(db, clip, new_path)
     db.refresh(clip)
 
     return _clip_to_out(clip)

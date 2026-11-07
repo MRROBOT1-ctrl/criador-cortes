@@ -24,7 +24,13 @@ from app.models import Clip, Job, Video
 from app.routers.download import _clip_to_out
 from app.schemas import ClipOut
 from app.services import clip_rendering
-from app.services.clip_rendering import remap_pan_track, render_clip, resolve_clip_segments
+from app.services.clip_rendering import (
+    clip_render_lock,
+    commit_render,
+    remap_pan_track,
+    render_clip,
+    resolve_clip_segments,
+)
 from app.services.transcription import load_transcript_segments, segments_overlapping
 
 router = APIRouter(tags=["captions"])
@@ -106,6 +112,17 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
     if clip is None:
         raise HTTPException(status_code=404, detail="Clipe não encontrado.")
 
+    # Lock por clipe (contrato §0.5): segurado durante validação + render +
+    # gravação, com o clipe relido logo depois de adquirido (outra
+    # renderização pode ter acabado de gravar). Ocupado = 409
+    # render_in_progress no envelope novo; os demais erros continuam no
+    # formato antigo.
+    with clip_render_lock(clip.id):
+        db.refresh(clip)
+        return _set_captions_locked(clip, payload, db)
+
+
+def _set_captions_locked(clip: Clip, payload: CaptionLinesIn, db: Session) -> ClipOut:
     video = db.get(Video, clip.video_id)
     if video is None or not video.filepath or not Path(video.filepath).exists():
         raise HTTPException(status_code=404, detail="Vídeo original não encontrado.")
@@ -142,7 +159,7 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
     # pré-corte (ver docstring de remap_pan_track).
     render_pan_track = remap_pan_track(clip.get_manual_pan_keyframes(), cut_segments)
 
-    render_clip(
+    new_path = render_clip(
         clip,
         video,
         job,
@@ -161,6 +178,8 @@ def set_captions(clip_id: str, payload: CaptionLinesIn, db: Session = Depends(ge
 
     clip.transcript_text = clip_text
     clip.hashtags, clip.suggested_titles = clip_rendering.compute_clip_metadata(clip_text)
-    db.commit()
+    # Arquivo novo `_r{n+1}.mp4` (render_clip não toca no atual) +
+    # revision += 1 + commit; o antigo só é apagado depois do commit.
+    commit_render(db, clip, new_path)
     db.refresh(clip)
     return _clip_to_out(clip)

@@ -20,8 +20,9 @@ from app.schemas import (
     validate_caption_font_family,
     validate_caption_style,
 )
-from app.services import clip_rendering
-from app.services.clip_rendering import remap_pan_track, render_clip, resolve_clip_segments, resolve_job_render_defaults
+from app.services import clip_edit
+from app.services.clip_edit import EditError
+from app.services.clip_rendering import clip_render_lock
 
 router = APIRouter(tags=["clips"])
 
@@ -67,6 +68,17 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
     if clip is None:
         raise HTTPException(status_code=404, detail="Clipe não encontrado.")
 
+    # Lock por clipe (contrato §0.5): segurado durante validação + render +
+    # gravação, e o clipe é relido logo depois de adquirido — assim tudo é
+    # calculado em cima do estado ATUAL (outra renderização pode ter acabado
+    # de gravar). Ocupado = 409 render_in_progress no envelope novo; os
+    # demais erros deste endpoint continuam no formato antigo.
+    with clip_render_lock(clip.id):
+        db.refresh(clip)
+        return _recut_locked(clip, payload, db)
+
+
+def _recut_locked(clip: Clip, payload: RecutRequest, db: Session) -> ClipOut:
     start_time = payload.start_time if payload.start_time is not None else clip.start_time
     end_time = payload.end_time if payload.end_time is not None else clip.end_time
     if end_time <= start_time:
@@ -87,93 +99,42 @@ def recut_clip(clip_id: str, payload: RecutRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=409, detail="Clipe ainda não possui um arquivo processado para sobrescrever.")
 
     job = db.get(Job, clip.job_id)
-    defaults = resolve_job_render_defaults(job)
 
-    # Cada campo de estilo: usa o valor mandado no request, senão cai pro que
-    # o job já tinha configurado (não pro default fixo do sistema) — assim
-    # editar só o tempo de um clipe não reseta acidentalmente o estilo dele.
-    captions_enabled = payload.captions_enabled if payload.captions_enabled is not None else defaults.captions_enabled
-    caption_font_size = payload.caption_font_size if payload.caption_font_size is not None else defaults.caption_font_size
-    caption_color = payload.caption_color if payload.caption_color is not None else defaults.caption_color
-    caption_style = payload.caption_style if payload.caption_style is not None else defaults.caption_style
-    caption_font_family = (
-        payload.caption_font_family if payload.caption_font_family is not None else defaults.caption_font_family
-    )
+    # Estilo: só os campos ENVIADOS entram — eles são gravados nas colunas
+    # caption_style_* do Clip (contrato §4.5); os omitidos não mexem na
+    # coluna e, no render, caem no estilo EFETIVO do clipe (Clip > Job >
+    # default). Antes o estilo do recut não era gravado em lugar nenhum, e
+    # um PUT /pan logo depois voltava ao estilo do Job.
+    style_overrides = {
+        name: value
+        for name, value in (
+            ("enabled", payload.captions_enabled),
+            ("font_size", payload.caption_font_size),
+            ("color", payload.caption_color),
+            ("preset", payload.caption_style),
+            ("font_family", payload.caption_font_family),
+        )
+        if value is not None
+    }
 
-    # Um pan MANUAL (ver Clip.manual_pan_keyframes), um override MANUAL de
-    # legenda (ver Clip.caption_segments_override), cortes INTERNOS (ver
-    # Clip.cut_segments/app/routers/clip_cuts.py) e janelas mutadas pelo
-    # filtro de palavrões (ver Clip.mute_ranges) são todos definidos em
-    # segundos relativos ao início do corte ATUAL — se o intervalo muda aqui,
-    # os quatro apontariam pro momento errado do vídeo/corte. Mais seguro
-    # descartar todos e voltar pro automático (detecção de rosto/transcrição
-    # do Whisper/clipe sem cortes internos) do que aplicar algo deslocado
-    # silenciosamente (o usuário pode reconfigurar os quatro depois do novo
-    # recorte via PUT /clips/{id}/pan, /captions, /cuts, e reaplicando o
-    # filtro de palavrões).
-    #
-    # Limitação aceita (sem lock nenhum): se ESSE recut e um PUT /cuts (ou
-    # /pan, /captions) do MESMO clipe rodarem ao mesmo tempo, o `clip` em
-    # memória aqui pode ficar desatualizado no meio do processamento — a
-    # troca atômica final de quem terminar por último "vence" no arquivo,
-    # mas o commit no banco de cada request só mexe nos campos que ELE
-    # pediu, podendo deixar banco e arquivo descrevendo edições diferentes.
-    # Ferramenta de um usuário só: risco baixo o bastante pra não valer um
-    # lock por clipe agora.
-    time_changed = start_time != clip.start_time or end_time != clip.end_time
-    manual_pan_track = None if time_changed else clip.get_manual_pan_keyframes()
-    cut_segments = None if time_changed else clip.get_cut_segments()
-    # Mesmo tratamento de cut_segments acima (ver Clip.mute_ranges): as
-    # janelas mutadas pelo filtro de palavrões (modo "censor") foram
-    # calculadas em cima do intervalo ANTIGO — mudar o intervalo invalida
-    # elas (o usuário pode reconfigurar rodando o filtro de novo, se quiser).
-    mute_ranges = None if time_changed else clip.get_mute_ranges()
-
-    # IMPORTANTE: diferente de manual_pan_track/cut_segments/mute_ranges
-    # acima (passados como parâmetro explícito pra resolve_clip_segments/
-    # render_clip, então o gate local acima já basta), resolve_clip_segments
-    # lê clip.get_caption_segments_override() DIRETO do clip, sem receber
-    # gate nenhum — ver app/services/clip_rendering.py. Pra ela não
-    # reaproveitar um override órfão (calculado pro intervalo ANTIGO) quando
-    # o intervalo muda, limpa ele aqui ANTES de chamar resolve_clip_segments.
-    # É a MESMA limpeza que já ia acontecer lá embaixo (bloco "if
-    # time_changed"), só adiantada — nada é persistido no banco antes da hora
-    # (db.commit() continua só no final), e clip.start_time/clip.end_time em
-    # si só são atualizados DEPOIS do render dar certo, como já era.
-    if time_changed:
-        clip.set_caption_segments_override(None)
-
-    srt_segments, clip_text = resolve_clip_segments(clip, cut_segments, start_time=start_time, end_time=end_time)
-    render_pan_track = remap_pan_track(manual_pan_track, cut_segments)
-
-    render_clip(
-        clip,
-        video,
-        job,
-        start_time=start_time,
-        end_time=end_time,
-        captions_enabled=captions_enabled,
-        caption_font_size=caption_font_size,
-        caption_color=caption_color,
-        caption_style=caption_style,
-        caption_font_family=caption_font_family,
-        srt_segments=srt_segments,
-        manual_pan_track=render_pan_track,
-        cut_segments=cut_segments,
-        mute_ranges=mute_ranges,
-    )
-
-    clip.transcript_text = clip_text
-    clip.hashtags, clip.suggested_titles = clip_rendering.compute_clip_metadata(clip_text)
-    clip.start_time = start_time
-    clip.end_time = end_time
-    if time_changed:
-        clip.set_manual_pan_keyframes(None)
-        clip.set_cut_segments(None)
-        clip.set_mute_ranges(None)
-        # clip.set_caption_segments_override(None) já foi feito mais acima —
-        # precisava rodar ANTES de resolve_clip_segments (ver comentário lá).
-    db.commit()
-    db.refresh(clip)
-
+    # Mudar o tempo REMAPEIA em vez de apagar (spec §6, decisão de 06/11):
+    # legenda manual, zoom manual e trechos removidos pelo usuário que
+    # continuam dentro do corte novo sobrevivem com o MESMO tempo absoluto;
+    # o que fica parcialmente fora é cortado na borda; o que fica totalmente
+    # fora é descartado (a tela antiga não tem modal, então o recut age como
+    # confirm_losses=true). Os palavrões são recalculados pra janela nova.
+    # Tudo isso é a MESMA regra do PUT /edit — por isso mora em
+    # app/services/clip_edit.py, e não aqui.
+    try:
+        swapped = clip_edit.run_recut(db, clip, video, job, start_time, end_time, style_overrides)
+    except EditError as exc:
+        # Só nothing_left chega aqui (buracos deixam < 0.5s); formato antigo.
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    if not swapped:
+        # Só acontece com mais de um processo da API (o lock em memória já
+        # barra o caso de um processo só).
+        raise HTTPException(
+            status_code=409,
+            detail="Este clipe foi alterado por outra edição enquanto renderizava. Recarregue e tente de novo.",
+        )
     return _clip_to_out(clip)

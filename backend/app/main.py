@@ -10,6 +10,7 @@ from app.database import init_db
 from app.routers import (
     captions,
     clip_cuts,
+    clip_edit,
     clips,
     compile,
     download,
@@ -19,6 +20,7 @@ from app.routers import (
     status,
     upload,
     watermark,
+    words,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -45,6 +47,10 @@ app.include_router(captions.router)
 app.include_router(compile.router)
 app.include_router(clip_cuts.router)
 app.include_router(relaxing_videos.router)
+# Timeline de Revisão v1 (docs/api-contract-timeline-v1.md): GET /draft,
+# PUT /edit e GET /jobs/{id}/words.
+app.include_router(clip_edit.router)
+app.include_router(words.router)
 
 # Preview dos cortes prontos direto pelo navegador (<video src="/outputs/...">)
 app.mount("/outputs", StaticFiles(directory=str(settings.output_dir)), name="outputs")

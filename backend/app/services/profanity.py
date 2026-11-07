@@ -64,6 +64,20 @@ def redact_text(text: str) -> str:
     return _WORD_RE.sub(_replace, text or "")
 
 
+def redact_segments(segments: list[Segment]) -> list[Segment]:
+    """Aplica `redact_text` no texto de cada segmento (tempos e `words`
+    intactos). Existe porque o transcript.json guarda o texto BRUTO do
+    Whisper e, fora do pipeline inicial, quem reconstrói a legenda (o
+    PUT /clips/{id}/edit, o GET /draft e o recut, via app/services/
+    clip_edit.py) precisa reaplicar a censura sempre que o filtro estiver
+    ligado. Só serve pra falas do Whisper: texto digitado pelo usuário
+    (legenda em modo manual) NUNCA passa por aqui, porque é intencional."""
+    return [
+        Segment(start=seg.start, end=seg.end, text=redact_text(seg.text), words=seg.words)
+        for seg in segments
+    ]
+
+
 def find_profanity_words(words: list[Word]) -> list[Word]:
     """Filtra, de uma lista de palavras com timestamp (ver Segment.words),
     só as que batem contra PROFANITY_WORDS."""
