@@ -15,6 +15,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Clip, Job, Video
 from app.schemas import ClipOut, JobSummary
+from app.services.caption_style import resolve_caption_style
 
 router = APIRouter(tags=["download"])
 
@@ -196,6 +197,12 @@ def _clip_to_out(clip: Clip) -> ClipOut:
         suggested_titles=json.loads(clip.suggested_titles) if clip.suggested_titles else None,
         video_duration=clip.job.video.duration if clip.job and clip.job.video else None,
         has_streamer_region=bool(clip.job and clip.job.get_streamer_region()),
+        # Estilo EFETIVO (Clip > Job > default) — o mesmo que o render usa,
+        # pra tela mostrar exatamente o que está no vídeo.
+        caption_style=resolve_caption_style(clip, clip.job),
+        # `or 0`: um objeto Clip recém-criado e ainda não flushado tem
+        # revision None (o default da coluna só entra no INSERT).
+        revision=clip.revision or 0,
     )
 
 

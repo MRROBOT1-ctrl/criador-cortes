@@ -196,6 +196,37 @@ class Clip(Base):
     # bater 1:1 com o formato aceito pelo endpoint e pelo cutter.
     cut_segments = Column(Text, nullable=True)
 
+    # Trechos removidos PELO USUÁRIO (Timeline de Revisão, PUT /clips/{id}/edit)
+    # — JSON: [[inicio, fim], ...] em segundos relativos ao INÍCIO DO CLIPE,
+    # mesma convenção de cut_segments, ordenados e sem overlap. NULL/[] = sem
+    # remoção manual. Existe separado de cut_segments porque lá os buracos do
+    # usuário e os do filtro de palavrões ("cut") ficam misturados: ao mudar o
+    # corte, os palavrões são recalculados do zero e, sem essa coluna, não
+    # daria pra saber quais buracos eram do usuário (duplicaria ou perderia
+    # cortes dele). cut_segments continua sendo o que o renderizador lê — no
+    # /edit ele passa a ser DERIVADO desta coluna + cortes do filtro.
+    manual_removed_ranges = Column(Text, nullable=True)
+
+    # Estilo da legenda POR CLIPE (mesmos campos de Job.captions_enabled/
+    # caption_font_size/caption_color/caption_style/caption_font_family).
+    # NULL = herda do Job, resolvido campo a campo em
+    # app/services/caption_style.py (Clip > Job > default). Antes o estilo só
+    # existia no Job, então um recut com estilo novo seguido de um PUT /pan
+    # voltava silenciosamente ao estilo do Job. Nullable de propósito: clipes
+    # antigos continuam funcionando sem backfill.
+    caption_style_enabled = Column(Boolean, nullable=True)
+    caption_style_font_size = Column(Integer, nullable=True)
+    caption_style_color = Column(String, nullable=True)  # hex #RRGGBB
+    caption_style_preset = Column(String, nullable=True)  # bold_outline|boxed|minimal|no_outline
+    caption_style_font_family = Column(String, nullable=True)
+
+    # Versão do clipe, incrementada a cada gravação que renderiza de novo
+    # (/edit, recut, cuts, pan, captions). Usada no compare-and-swap do
+    # PUT /edit (UPDATE ... WHERE revision = ?) pra detectar que outra aba
+    # salvou antes, e no nome do arquivo novo (clip_{index}_r{n}.mp4).
+    # server_default pra o ALTER TABLE/linhas antigas nascerem com 0, não NULL.
+    revision = Column(Integer, nullable=False, default=0, server_default="0")
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     job = relationship("Job", back_populates="clips")
@@ -235,6 +266,19 @@ class Clip(Base):
             return None
         try:
             return [(float(s), float(e)) for s, e in json.loads(self.cut_segments)]
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    def set_manual_removed_ranges(self, ranges: list[tuple[float, float]] | None) -> None:
+        # Lista vazia vira NULL, igual set_cut_segments — "sem remoção manual"
+        # tem uma representação só no banco.
+        self.manual_removed_ranges = json.dumps(ranges) if ranges else None
+
+    def get_manual_removed_ranges(self) -> list[tuple[float, float]] | None:
+        if not self.manual_removed_ranges:
+            return None
+        try:
+            return [(float(s), float(e)) for s, e in json.loads(self.manual_removed_ranges)]
         except (ValueError, TypeError, json.JSONDecodeError):
             return None
 

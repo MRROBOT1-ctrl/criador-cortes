@@ -80,12 +80,47 @@ docker compose up --build
 > rode um `ALTER TABLE` manual pra cada coluna nova (mais seguro pra não
 > perder dado de dev). Colunas adicionadas depois do schema inicial:
 > `jobs.profanity_filter`, `clips.suggested_titles`, `clips.mute_ranges`,
-> `relaxing_videos.status`, `relaxing_videos.error_message`.
+> `relaxing_videos.status`, `relaxing_videos.error_message`, e as 7 da
+> Timeline de Revisão v1 (ver "Atualizando banco existente" abaixo).
 
 - API: http://localhost:8000 (docs interativas em `/docs`)
 - Telinha de métricas: http://localhost:8000/ui/metrics.html
 - Frontend: http://localhost:5173 (via `docker compose up --build`, serviço
   `frontend`, nginx servindo o build estático)
+
+### Atualizando banco existente
+
+Banco **novo** não precisa de nada: o `init_db()` (`Base.metadata.create_all`)
+já cria a tabela `clips` com todas as colunas. Mas o `create_all` **não
+adiciona colunas** a uma tabela que já existe — quem tem um
+`backend/data/app.db` de antes da Timeline de Revisão v1 precisa
+acrescentar as 7 colunas novas de `clips` à mão:
+
+1. Faça backup do banco (troque `AAAAMMDD` pela data de hoje):
+   ```bash
+   cp backend/data/app.db backend/data/app.db.bak-AAAAMMDD
+   ```
+2. Rode os `ALTER TABLE` (ex.: `sqlite3 backend/data/app.db`):
+   ```sql
+   ALTER TABLE clips ADD COLUMN caption_style_enabled     BOOLEAN;
+   ALTER TABLE clips ADD COLUMN caption_style_font_size   INTEGER;
+   ALTER TABLE clips ADD COLUMN caption_style_color       VARCHAR;
+   ALTER TABLE clips ADD COLUMN caption_style_preset      VARCHAR;
+   ALTER TABLE clips ADD COLUMN caption_style_font_family VARCHAR;
+   ALTER TABLE clips ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE clips ADD COLUMN manual_removed_ranges     TEXT;
+   ```
+   As colunas `caption_style_*` ficam NULL nos clipes antigos, o que quer
+   dizer "herda o estilo do Job" — não precisa de backfill. O `revision`
+   precisa do `NOT NULL DEFAULT 0` pra os clipes antigos começarem na
+   versão 0.
+3. Ou, se o banco não tiver nada importante, simplesmente apague
+   `backend/data/app.db` — ele é recriado vazio, já com as colunas, na
+   próxima subida da API.
+
+Rollback: um `git revert` do código não exige mexer no banco (o código
+antigo ignora as colunas extras). Para removê-las mesmo assim, o SQLite da
+venv aceita `ALTER TABLE clips DROP COLUMN …`.
 
 ### Frontend em dev (hot reload)
 
