@@ -269,6 +269,42 @@ uvicorn app.main:app --reload
 celery -A app.celery_app worker --loglevel=info --concurrency=1
 ```
 
+## Testes (backend)
+
+As dependências de teste ficam separadas em `backend/requirements-dev.txt`,
+fora da imagem Docker.
+
+```bash
+cd backend
+source .venv/bin/activate
+uv pip install -r requirements-dev.txt
+
+pytest tests/ -v          # a partir de backend/
+# ou, a partir da raiz do repositório:
+# pytest backend/tests/ -v
+```
+
+Os testes não precisam de Redis, Celery, ffmpeg nem de arquivos de vídeo, e
+podem rodar com a API e o worker ligados. O `tests/conftest.py` aponta
+`DATABASE_URL`, `DATA_DIR`, `OUTPUT_DIR`, `UPLOAD_DIR` e `RELAXING_VIDEOS_DIR`
+para uma pasta temporária **antes** de importar a aplicação e aborta a execução
+se algum desses caminhos for o real, então `backend/data/app.db` e os vídeos
+nunca são tocados. O ffmpeg é substituído por um renderizador falso: a suíte
+valida contrato, remapeamento, censura, lock e banco, não a qualidade do vídeo.
+
+A suíte foi validada por mutation testing manual: 32 bugs injetados, 31 pegos,
+1 sobrevivente identificado e corrigido. O sobrevivente era uma injeção que não
+alterava o comportamento; ela foi trocada por um lock global de verdade, que a
+suíte detecta. Os bugs foram escolhidos à mão nos pontos críticos do contrato,
+então isso não é uma medida exaustiva de cobertura. Para repetir (leva alguns
+minutos e só altera cópias temporárias do código):
+
+```bash
+cd backend
+source .venv/bin/activate
+python tests/tools/mutate.py
+```
+
 ## Próximos passos
 
 1. Fase 2 restante: thumbnails sugeridas, sentimento via modelo de texto.
