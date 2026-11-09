@@ -20,6 +20,7 @@ import type {
   EditChange,
   WordOut,
 } from "../types";
+import { nextPlayableTime, previewSkipRanges } from "../lib/previewSkip";
 import { ReviewTimeline } from "./ReviewTimeline";
 import { CaptionSection } from "./CaptionSection";
 import { CaptionTextEditor } from "./CaptionTextEditor";
@@ -88,6 +89,7 @@ type TabId = (typeof TABS)[number]["id"];
 
 interface Props {
   clip: ClipOut;
+  clipCount: number;
   onBack: () => void;
   onUpdated: (clip: ClipOut) => void;
 }
@@ -117,7 +119,7 @@ function styleFromClip(clip: ClipOut) {
  * renderiza suas próprias coisas por vez (antes, no modal, as 5 seções
  * ficavam todas montadas e buscando dado ao mesmo tempo numa área pequena).
  */
-export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
+export function ClipEditorScreen({ clip, clipCount, onBack, onUpdated }: Props) {
   const [tab, setTab] = useState<TabId>("corte");
   // A aba de revisão é montada na primeira visita e depois só escondida —
   // senão trocar de aba jogaria fora o rascunho local não renderizado.
@@ -345,6 +347,7 @@ export function ClipEditorScreen({ clip, onBack, onUpdated }: Props) {
       {reviewMounted && (
         <ReviewTab
           clip={clip}
+          clipCount={clipCount}
           active={tab === "revisao"}
           onUpdated={onUpdated}
           onDirtyChange={setReviewDirty}
@@ -540,12 +543,13 @@ type Banner =
 
 interface ReviewTabProps {
   clip: ClipOut;
+  clipCount: number;
   active: boolean;
   onUpdated: (clip: ClipOut) => void;
   onDirtyChange: (dirty: boolean) => void;
 }
 
-function ReviewTab({ clip, active, onUpdated, onDirtyChange }: ReviewTabProps) {
+function ReviewTab({ clip, clipCount, active, onUpdated, onDirtyChange }: ReviewTabProps) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [serverDraft, setServerDraft] = useState<ClipDraft | null>(null);
@@ -563,6 +567,7 @@ function ReviewTab({ clip, active, onUpdated, onDirtyChange }: ReviewTabProps) {
   const [videoAspect, setVideoAspect] = useState(16 / 9);
   const [frameBoxWidth, setFrameBoxWidth] = useState(0);
   const [sourceFailed, setSourceFailed] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewBoxRef = useRef<HTMLDivElement>(null);
@@ -636,6 +641,27 @@ function ReviewTab({ clip, active, onUpdated, onDirtyChange }: ReviewTabProps) {
   useEffect(() => {
     if (!active) videoRef.current?.pause();
   }, [active]);
+
+  // Durante a reprodução, salta o que não vai existir no corte final. Roda por
+  // frame porque o `timeupdate` só dispara umas 4x/s e deixaria aparecer até
+  // 250ms do trecho removido. Pausado não salta: clicar num trecho removido
+  // na timeline precisa continuar mostrando aquele frame. Fora do corte também
+  // não, porque a folga da timeline é só contexto.
+  useEffect(() => {
+    if (!playing || !draft) return;
+    const skipRanges = previewSkipRanges(draft.removed, draft.profanity.ranges);
+    if (skipRanges.length === 0) return;
+    const { start, end } = draft.range;
+    let frame = requestAnimationFrame(function tick() {
+      const v = videoRef.current;
+      if (v && !v.seeking && v.currentTime >= start && v.currentTime < end) {
+        const target = nextPlayableTime(v.currentTime, skipRanges);
+        if (target !== null) v.currentTime = target;
+      }
+      frame = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [playing, draft]);
 
   // Largura real da caixa da prévia — a legenda em CSS é escalada por ela
   // (mesma calibração da prévia antiga, que foi feita pra 220px de largura).
@@ -798,7 +824,7 @@ function ReviewTab({ clip, active, onUpdated, onDirtyChange }: ReviewTabProps) {
       <Card padding="sm" className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col">
           <span className="text-sm font-semibold text-heading">
-            Corte #{clip.index + 1} · {formatTimecode(draft.range.start)} → {formatTimecode(draft.range.end)} (
+            Corte {clip.index + 1} de {clipCount} · {formatTimecode(draft.range.start)} → {formatTimecode(draft.range.end)} (
             {duration.toFixed(1)}s)
           </span>
           <span className="text-xs text-text-subtle">
@@ -893,6 +919,8 @@ function ReviewTab({ clip, active, onUpdated, onDirtyChange }: ReviewTabProps) {
                 }}
                 onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)}
                 onSeeked={(e) => setPlayhead(e.currentTarget.currentTime)}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
                 onError={() => setSourceFailed(true)}
               />
               {/* Moldura 9:16: tracejada = enquadramento automático (só

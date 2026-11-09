@@ -158,7 +158,12 @@ export default function App() {
         )}
 
         {stage === "editing" && editingClip && (
-          <ClipEditorScreen clip={editingClip} onBack={handleCloseEditor} onUpdated={handleClipUpdated} />
+          <ClipEditorScreen
+            clip={editingClip}
+            clipCount={clips?.length ?? 0}
+            onBack={handleCloseEditor}
+            onUpdated={handleClipUpdated}
+          />
         )}
       </main>
     </div>
