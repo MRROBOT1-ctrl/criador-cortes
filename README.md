@@ -255,12 +255,41 @@ docker-compose.yml         # redis + backend (API) + worker + frontend (nginx)
 
 ## Rodando sem Docker (dev)
 
-Precisa de `ffmpeg` e `redis-server` instalados localmente.
+Precisa de `ffmpeg`, `redis-server`, Node.js e [uv](https://docs.astral.sh/uv/)
+instalados localmente.
+
+**Primeira instalação:**
 
 ```bash
 cd backend
-uv venv --python 3.12 && source .venv/bin/activate
-uv pip install -r requirements.txt
+uv venv --python 3.12
+uv pip install --python .venv/bin/python -r requirements.txt
+cd ../frontend
+npm install
+```
+
+O backend funciona sem `.env`: por padrão usa SQLite em `backend/data/app.db` e
+Redis local. Para mudar algo, copie o `.env.example` da raiz para `backend/.env`
+e ajuste (`DATABASE_URL=sqlite:///./data/app.db`, `REDIS_URL=redis://localhost:6379/0`).
+
+**Subir tudo de uma vez**, a partir da raiz do repositório:
+
+```bash
+./start.sh
+```
+
+O script sobe Redis, API, worker Celery e frontend, espera responderem e mostra
+os endereços (frontend em http://localhost:5173, API em http://localhost:8000).
+`Ctrl+C` encerra tudo que ele iniciou. Os logs ficam em
+`/tmp/criador-cortes-logs/`. No WSL, com o projeto em `/mnt/c`, o Vite não
+percebe alterações nos arquivos: depois de editar o frontend, encerre e rode de
+novo. O mesmo vale para o backend, que sobe sem `--reload`.
+
+**Ou manualmente**, um serviço por terminal:
+
+```bash
+cd backend
+source .venv/bin/activate
 
 # terminal 1
 uvicorn app.main:app --reload
