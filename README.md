@@ -325,7 +325,8 @@ A suíte foi validada por mutation testing manual: 32 bugs injetados, 31 pegos,
 1 sobrevivente identificado e corrigido. O sobrevivente era uma injeção que não
 alterava o comportamento; ela foi trocada por um lock global de verdade, que a
 suíte detecta. Os bugs foram escolhidos à mão nos pontos críticos do contrato,
-então isso não é uma medida exaustiva de cobertura. Para repetir (leva alguns
+então isso não é uma medida exaustiva de cobertura. Os 32 são a validação
+original; a lista do script cresce junto com as regras novas. Para repetir (leva alguns
 minutos e só altera cópias temporárias do código):
 
 ```bash

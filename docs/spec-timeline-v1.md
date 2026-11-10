@@ -118,6 +118,9 @@ qual área é "nova", também compara com o intervalo **salvo** do clipe.
   **perda** e o backend cria um ponto **interpolado exatamente na borda**
   (registrado em `adjustments`), para o enquadramento na borda não mudar.
 - **"Exatamente na borda" conta como dentro:** `start ≤ t ≤ end`.
+- **Nenhum ponto de zoom chega ao render:** o vídeo usa o enquadramento
+  automático, sem congelar nem interpolar o enquadramento antigo (decisão de
+  09/11). O diálogo de perdas avisa isso de forma explícita.
 - **Legenda em modo `auto`:** não tem perda nem ajuste; é sempre recalculada
   a partir das falas do Whisper (`segments_overlapping`, ≥ 50% de
   sobreposição), censuradas.
@@ -348,6 +351,9 @@ D depois de A e B → integração e teste de ponta a ponta.
 - Zoom manual junto com tela dividida (streamer).
 - Edição de vários clipes ao mesmo tempo.
 - Censura reaplicada nos endpoints antigos.
+- Aviso de enquadramento automático nas abas antigas (`recut` e `PUT /cuts`
+  não têm diálogo de perdas). Limitação conhecida, a resolver junto com a
+  censura dos endpoints antigos.
 - Remoção da tela antiga (só depois do critério da §9).
 
 ## 12. Riscos conhecidos

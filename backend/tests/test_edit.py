@@ -582,3 +582,79 @@ class TestSaida:
         assert clip.transcript_text == "texto bem novo aqui"
         assert json.loads(clip.hashtags)
         assert json.loads(clip.suggested_titles)
+
+
+POINTS_OUTSIDE = [
+    pytest.param([(10.0, 0.2), (12.0, 0.8)], id="todos-antes"),
+    pytest.param([(26.0, 0.2), (28.0, 0.8)], id="todos-depois"),
+    pytest.param([(10.0, 0.0), (30.0, 1.0)], id="dos-dois-lados"),
+]
+
+
+class TestFramingFallback:
+    @pytest.mark.parametrize("pan", POINTS_OUTSIDE)
+    def test_nenhum_ponto_na_janela_avisa(self, client, scenario, edit_body, pan):
+        response = client.put(scenario.edit_url, json=edit_body(start=15.0, end=25.0, pan=pan))
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is True
+        assert len(detail(response)["losses"]) == 2
+
+    @pytest.mark.parametrize("pan", POINTS_OUTSIDE)
+    def test_dry_run_com_pontos_fora_traz_true(self, client, scenario, edit_body, pan):
+        response = client.put(f"{scenario.edit_url}?dry_run=true", json=edit_body(start=15.0, end=25.0, pan=pan))
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is True
+
+    def test_dry_run_com_ponto_dentro_traz_false(self, client, scenario, edit_body):
+        payload = edit_body(start=15.0, end=25.0, pan=[(10.0, 0.0), (20.0, 1.0)])
+
+        response = client.put(f"{scenario.edit_url}?dry_run=true", json=payload)
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is False
+
+    def test_ponto_dentro_com_vizinho_fora_nao_avisa(self, client, scenario, edit_body):
+        response = client.put(scenario.edit_url, json=edit_body(start=15.0, end=25.0, pan=[(10.0, 0.0), (20.0, 1.0)]))
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is False
+
+    def test_perda_so_de_legenda_sem_zoom_nao_avisa(self, client, scenario, edit_body):
+        response = client.put(scenario.edit_url, json=edit_body(start=15.0, lines=[(11.0, 13.0, "fora"), (20.0, 22.0, "fica")]))
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is False
+
+    def test_todos_os_pontos_em_trecho_removido_avisa(self, client, scenario, edit_body):
+        payload = edit_body(start=15.0, end=25.0, lines=[(11.0, 13.0, "fora")], pan=[(20.0, 0.5)], removed=[(18.0, 22.0)])
+
+        response = client.put(scenario.edit_url, json=payload)
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is True
+
+    def test_ponto_na_borda_de_trecho_removido_sobrevive(self, client, scenario, edit_body):
+        payload = edit_body(start=15.0, end=25.0, lines=[(11.0, 13.0, "fora")], pan=[(18.0, 0.5)], removed=[(18.0, 22.0)])
+
+        response = client.put(scenario.edit_url, json=payload)
+
+        assert_error(response, 409, "losses_require_confirmation")
+        assert detail(response)["framing_fallback"] is False
+
+    def test_aviso_sozinho_nao_bloqueia_sem_perdas(self, client, scenario, edit_body):
+        # Abrir o diálogo só por causa do zoom em trecho removido é a Parte 3.
+        response = client.put(scenario.edit_url, json=edit_body(start=15.0, end=25.0, pan=[(20.0, 0.5)], removed=[(18.0, 22.0)]))
+
+        assert response.status_code == 200, response.text
+
+    def test_confirmando_o_render_usa_o_automatico(self, client, scenario, edit_body, fake_render, read_clip):
+        payload = edit_body(start=15.0, end=25.0, pan=[(10.0, 0.2), (12.0, 0.8)], confirm_losses=True)
+
+        response = client.put(scenario.edit_url, json=payload)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["draft"]["pan"] == []
+        assert read_clip(scenario.clip_id).get_manual_pan_keyframes() is None
+        assert fake_render.last.kwargs["manual_pan_track"] is None

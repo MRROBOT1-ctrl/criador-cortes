@@ -175,6 +175,7 @@ export interface ApiErrorDetail {
   code: string;
   message: string;
   losses?: EditChange[];
+  framing_fallback?: boolean;
   current_revision?: number;
   index?: number;
   field?: string;

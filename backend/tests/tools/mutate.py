@@ -59,6 +59,8 @@ MUTATIONS = [
     ("sem nothing_left", CE, "if kept_duration(keep_rel, new_start, new_end) < MIN_CLIP_DURATION:", "if False:"),
     ("derivacao nao tira filtro", CE, "leftovers = subtract_ranges(holes_abs, profanity_cut_abs)", "leftovers = holes_abs"),
     ("sem arredondar range", CE, "range=TimeRange(start=r3(start), end=r3(end)),", "range=TimeRange(start=start, end=end),"),
+    ("framing sempre false", CE, "plan.framing_fallback = bool(pan) and clip_rendering", "plan.framing_fallback = False and clip_rendering"),
+    ("framing ignora se tinha pontos", CE, "plan.framing_fallback = bool(pan) and clip_rendering", "plan.framing_fallback = clip_rendering"),
     ("download arquivo fixo", "app/routers/download.py", "    path = Path(clip.processed_path)\n    return _ranged", "    path = Path(clip.processed_path).parent / 'clip_0.mp4'\n    return _ranged"),
 ]
 

@@ -246,7 +246,7 @@ validação (`400`) → `not_found` → `clip_not_rendered` → lock
 | 409 | `clip_not_rendered` | o clipe ainda não tem arquivo gerado | | nada |
 | 409 | `render_in_progress` | outra renderização do mesmo clipe está rodando | | nada |
 | 409 | `revision_conflict` | `revision` diferente da atual: outra aba salvou antes | `current_revision` | nada |
-| 409 | `losses_require_confirmation` | há perdas e `confirm_losses` é `false` | `losses: EditChange[]` | nada |
+| 409 | `losses_require_confirmation` | há perdas e `confirm_losses` é `false` | `losses: EditChange[]`, `framing_fallback: boolean` | nada |
 | 422 | (padrão do FastAPI) | JSON mal formado ou tipo errado | | nada |
 | 500 | `render_failed` | o ffmpeg falhou, ou o commit no banco falhou | `ffmpeg_tail` (últimas linhas do stderr, se disponíveis) | **nada**: arquivo e banco anteriores intactos |
 
@@ -267,10 +267,17 @@ validação (`400`) → `not_found` → `clip_not_rendered` → lock
       { "kind": "caption", "start": 1.2, "end": 3.8, "text": "Bom dia a todos" },
       { "kind": "pan", "start": 2.0, "end": 2.0 },
       { "kind": "removed", "start": 25.0, "end": 26.5 }
-    ] } }
+    ],
+    "framing_fallback": false } }
 ```
 O frontend mostra o modal. Se o usuário confirmar, **reenvia o mesmo
 corpo** com `confirm_losses: true`.
+
+`framing_fallback` é `true` quando o rascunho tinha pontos de zoom e nenhum
+chega ao render, seja por estarem fora do corte ou dentro de trechos que serão
+cortados: o vídeo sai com o enquadramento automático, e o modal avisa. É só
+informativo e vem igual com `?dry_run=true`. Um `dry_run` sem perdas responde
+`200` e não traz o campo.
 
 `409 revision_conflict`
 ```json
@@ -790,6 +797,7 @@ export interface ApiErrorDetail {
   code: string;
   message: string;
   losses?: EditChange[];
+  framing_fallback?: boolean;
   current_revision?: number;
   index?: number;
   field?: string;

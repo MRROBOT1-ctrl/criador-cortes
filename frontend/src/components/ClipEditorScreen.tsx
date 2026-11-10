@@ -560,6 +560,7 @@ function ReviewTab({ clip, clipCount, active, onUpdated, onDirtyChange }: Review
   const [rendering, setRendering] = useState(false);
   const [banner, setBanner] = useState<Banner | null>(null);
   const [losses, setLosses] = useState<EditChange[] | null>(null);
+  const [framingFallback, setFramingFallback] = useState(false);
   const [selectedCaption, setSelectedCaption] = useState<number | null>(null);
   const [playhead, setPlayhead] = useState(clip.start_time);
   const [styleOpen, setStyleOpen] = useState(false);
@@ -715,6 +716,7 @@ function ReviewTab({ clip, clipCount, active, onUpdated, onDirtyChange }: Review
       // Qualquer erro PRESERVA o rascunho (spec §7) — nada aqui mexe em `draft`.
       if (err instanceof ApiError && err.code === "losses_require_confirmation") {
         setLosses(err.detail?.losses ?? []);
+        setFramingFallback(err.detail?.framing_fallback === true);
       } else if (err instanceof ApiError && err.code === "revision_conflict") {
         setBanner({ kind: "conflict", message: "Este corte foi alterado em outra aba." });
       } else if (err instanceof ApiError && err.code === "render_in_progress") {
@@ -1129,6 +1131,7 @@ function ReviewTab({ clip, clipCount, active, onUpdated, onDirtyChange }: Review
       {losses && (
         <LossesDialog
           losses={losses}
+          framingFallback={framingFallback}
           onBackToEdit={() => setLosses(null)}
           onConfirm={() => render(true)}
         />
@@ -1145,10 +1148,12 @@ function ReviewTab({ clip, clipCount, active, onUpdated, onDirtyChange }: Review
  */
 function LossesDialog({
   losses,
+  framingFallback,
   onBackToEdit,
   onConfirm,
 }: {
   losses: EditChange[];
+  framingFallback: boolean;
   onBackToEdit: () => void;
   onConfirm: () => void;
 }) {
@@ -1172,6 +1177,11 @@ function LossesDialog({
           {losses.length} {losses.length === 1 ? "item ficou" : "itens ficaram"} fora do novo corte e{" "}
           {losses.length === 1 ? "será descartado" : "serão descartados"}:
         </p>
+        {framingFallback && (
+          <p className="rounded-lg border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning-hover">
+            O corte não tem enquadramento manual na nova janela. O vídeo vai usar o enquadramento automático.
+          </p>
+        )}
         <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto text-xs text-text-secondary">
           {losses.map((l, i) => (
             <li key={i} className="flex gap-2 rounded bg-surface-hover px-2 py-1">

@@ -563,6 +563,9 @@ class EditPlan:
     profanity_ranges: list[tuple[float, float]]
     adjustments: list[EditChange] = field(default_factory=list)
     losses: list[EditChange] = field(default_factory=list)
+    # O rascunho tinha zoom manual, mas nenhum ponto chega ao render: o vídeo
+    # sai com o enquadramento automático. Só informa; não bloqueia sozinho.
+    framing_fallback: bool = False
 
     # Valores RELATIVOS, prontos pro banco (contrato §1.6, tabela "O que é
     # gravado no sucesso"), em coordenadas ANTES dos cortes internos.
@@ -692,6 +695,8 @@ def plan_edit(
     plan.pan_rel = [(to_relative(p.t, new_start), p.cx) for p in kept_pan] or None
     plan.removed_rel = ranges_to_relative(kept_removed, new_start) or None
     plan.cut_segments_rel = keep_rel
+    # Mesma função que monta o rastro do render, pra o aviso não divergir dele.
+    plan.framing_fallback = bool(pan) and clip_rendering.remap_pan_track(plan.pan_rel, keep_rel) is None
     # Mudos só existem no modo "censor"; no "cut" o palavrão vira buraco em
     # cut_segments (acima). Guardados PRÉ-corte, como Clip.mute_ranges sempre foi.
     if profanity_mode == "censor":
@@ -963,6 +968,7 @@ def _plan_from_payload(clip: Clip, job: Job | None, payload: ClipEditIn) -> Edit
         raise EditError(
             409, "losses_require_confirmation", losses_message(len(plan.losses)),
             losses=[change_to_json(c) for c in plan.losses],
+            framing_fallback=plan.framing_fallback,
         )
     return plan
 
